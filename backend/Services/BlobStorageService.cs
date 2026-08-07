@@ -9,7 +9,13 @@ public class BlobStorageService : IBlobStorageService
 
     public BlobStorageService(IConfiguration config)
 {
-    var connectionString = config["AzureBlobStorage:ConnectionString"]
+    // Read from the standard ASP.NET Core "ConnectionStrings" section (config.GetConnectionString)
+    // rather than a custom "AzureBlobStorage:ConnectionString" key. This is required, not just a
+    // style choice: Azure App Service's "Application settings" blade rejects any setting whose name
+    // ends in "ConnectionString" (it collides with the platform's dedicated "Connection strings"
+    // feature). Using the ConnectionStrings section lets the value be set there instead, exactly
+    // like ConnectionStrings:AzureSql already is.
+    var connectionString = config.GetConnectionString("AzureBlobStorage")
         ?? throw new InvalidOperationException("Blob storage connection string missing");
     var containerName = config["AzureBlobStorage:ContainerName"] ?? "documents";
 
