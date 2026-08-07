@@ -1,0 +1,125 @@
+/* === Design tokens extracted from "Extraction Console" (Claude Design mockup) === */
+
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap');
+
+:root {
+  --ink: #12365a;
+  --text: #354759;
+  --muted: #7d8b9c;
+  --bg: #f6f8fb;
+  --surface: #fff;
+  --line: #e3e9f1;
+  --line-soft: #f0f3f8;
+  --blue: #2f6296;
+  --blue-deep: #14456f;
+  --blue-soft: #eef4fa;
+  --orange: #e2762c;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'DM Sans', system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 {
+  font-family: 'Source Serif 4', Georgia, serif;
+  color: var(--ink);
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+a { color: var(--blue); }
+a:hover { color: var(--blue-deep); }
+:focus { outline: none; }
+:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+::selection { background: #d8e6f4; }
+::placeholder { color: var(--muted); }
+
+table { border-collapse: collapse; width: 100%; }
+th {
+  text-align: left;
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  font-weight: 500;
+  color: var(--muted);
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--line);
+}
+td {
+  padding: 14px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  vertical-align: top;
+}
+
+.pill {
+  padding: 7px 15px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pill:hover { background: var(--blue-soft); color: var(--blue-deep); }
+.pill:disabled { opacity: .45; cursor: not-allowed; }
+.pill-solid { background: var(--blue-deep); border-color: var(--blue-deep); color: #fff; }
+.pill-solid:hover { background: var(--blue); color: #fff; }
+
+.fld {
+  height: 42px;
+  padding: 0 13px;
+  font: inherit;
+  font-size: 14.5px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.fld:hover { border-color: #cdd8e6; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(18, 54, 90, .04);
+}
+
+.stat {
+  font-family: 'Source Serif 4', Georgia, serif;
+  font-size: 28px;
+  color: var(--ink);
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.lbl {
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.icon-btn {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.icon-btn:hover { background: #fdf1e7; color: var(--orange); }

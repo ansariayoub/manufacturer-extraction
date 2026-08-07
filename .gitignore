@@ -1,0 +1,27 @@
+# ---- Secrets : ne JAMAIS committer ----
+**/appsettings.Development.json
+**/appsettings.*.local.json
+**/secrets.json
+.env
+.env.*
+!.env.example
+
+# ---- .NET ----
+backend/bin/
+backend/obj/
+**/bin/
+**/obj/
+*.user
+.vs/
+
+# ---- Node / Vite ----
+node_modules/
+frontend/dist/
+frontend/dist-ssr/
+*.local
+
+# ---- OS / éditeurs ----
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

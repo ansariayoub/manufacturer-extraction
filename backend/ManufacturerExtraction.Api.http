@@ -1,0 +1,6 @@
+@ManufacturerExtraction.Api_HostAddress = http://localhost:5193
+
+GET {{ManufacturerExtraction.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
