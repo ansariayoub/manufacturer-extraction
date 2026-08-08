@@ -1,0 +1,38 @@
+name: Deploy backend to Azure App Service
+
+# Only re-deploys when backend code actually changes, so a frontend-only commit
+# doesn't trigger a pointless restart of the API.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy-backend.yml"
+  workflow_dispatch:
+
+env:
+  AZURE_WEBAPP_NAME: manufacturer-extraction-api
+  PROJECT_PATH: backend/ManufacturerExtraction.Api.csproj
+
+jobs:
+  build-and-deploy:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        run: dotnet restore "${{ env.PROJECT_PATH }}"
+
+      - name: Publish
+        run: dotnet publish "${{ env.PROJECT_PATH }}" -c Release -o "${{ github.workspace }}/publish"
+
+      - name: Deploy to Azure App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: "${{ github.workspace }}/publish"
