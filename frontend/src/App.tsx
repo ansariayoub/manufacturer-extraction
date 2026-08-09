@@ -25,7 +25,9 @@ const UPLOAD_CONCURRENCY = 3;
 const ACTIVE_STATUSES = ['Queued', 'Extracting', 'Mapping'];
 
 export default function App() {
-  const [manufacturer, setManufacturer] = useState('Walraven');
+  // No default: forces an explicit choice from the dropdown rather than silently uploading
+  // under whichever manufacturer happened to be first/last selected.
+  const [manufacturer, setManufacturer] = useState('');
   const [month, setMonth] = useState('06');
   const [year, setYear] = useState('2026');
   const [instructions, setInstructions] = useState('');

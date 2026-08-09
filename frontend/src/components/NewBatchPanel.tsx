@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { ChangeEvent, DragEvent } from 'react';
+import { MANUFACTURERS } from '../data/manufacturers';
 
-const MANUFACTURERS = ['Walraven', 'Josam', 'DFC', 'Caleffi', 'Burnham Commercial'];
 const MONTH_OPTIONS = [
   ['01', 'January'], ['02', 'February'], ['03', 'March'], ['04', 'April'],
   ['05', 'May'], ['06', 'June'], ['07', 'July'], ['08', 'August'],
@@ -48,16 +48,15 @@ export function NewBatchPanel({
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,130px) minmax(0,100px)', gap: 14, marginBottom: 16 }}>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>Manufacturer</span>
-          <input
+          {/* Plain <select>: click the arrow, pick from the list, no typing needed. */}
+          <select
             className="fld"
-            list="mfr-list"
-            placeholder="Search manufacturers…"
             value={manufacturer}
             onChange={(e) => onManufacturerChange(e.target.value)}
-          />
-          <datalist id="mfr-list">
-            {MANUFACTURERS.map((m) => <option key={m} value={m} />)}
-          </datalist>
+          >
+            <option value="" disabled>Select a manufacturer…</option>
+            {MANUFACTURERS.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
         </label>
 
         <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
