@@ -43,6 +43,12 @@ builder.Services.AddHostedService<DocumentProcessingWorker>();
 
 var app = builder.Build();
 
+// Fail fast on bad config instead of starting successfully and failing per-request later.
+// See StartupConfigValidator for why this exists.
+StartupConfigValidator.ValidateOrExit(
+    app.Configuration,
+    app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("StartupConfigValidator"));
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
