@@ -5,6 +5,15 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>5e032d5a-e4bb-4088-8b2b-9d138110890c</UserSecretsId>
+
+    <!-- The native launcher (bin/.../ManufacturerExtraction.Api.exe) is what a running instance
+         locks on Windows, causing "dotnet build" to fail with MSB3027/MSB3026 whenever the app
+         is still running from a previous "dotnet run". This project is only ever launched via
+         `dotnet run` / `dotnet ManufacturerExtraction.Api.dll` (never by double-clicking the
+         .exe), so the native launcher is not needed — disabling it stops that file from being
+         produced at all, removing the lock conflict at its source instead of working around it
+         each time. -->
+    <UseAppHost>false</UseAppHost>
   </PropertyGroup>
 
   <ItemGroup>
