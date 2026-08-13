@@ -15,9 +15,9 @@ export function AppHeader() {
         style={{ width: 28, height: 28, objectFit: 'contain', borderRadius: 7 }}
       />
       <span style={{ fontFamily: "'Source Serif 4',Georgia,serif", fontSize: 19, color: 'var(--ink)' }}>
-        Intake
+        Manufacturer Extraction
       </span>
-      <span style={{ color: 'var(--muted)', fontSize: 13 }}>Manufacturer report extraction</span>
+      <span style={{ color: 'var(--muted)', fontSize: 13 }}>Report intake & processing</span>
     </div>
   );
 }
