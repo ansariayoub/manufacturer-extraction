@@ -125,7 +125,7 @@ export function DocumentQueueTable({ documents, loading = false, onOpen, onRemov
                   {isDone ? money(headlineNet) : '—'}
                   {isDone && doc.isCumulative && (
                     <div style={{ color: 'var(--muted)', fontSize: 11.5, fontWeight: 400, marginTop: 3 }}>
-                      {hasMonthly ? `YTD ${money(doc.totalNetSales)}` : 'YTD cumulé'}
+                      {hasMonthly ? `YTD ${money(doc.totalNetSales)}` : 'YTD cumulative'}
                     </div>
                   )}
                 </td>

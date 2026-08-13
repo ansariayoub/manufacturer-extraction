@@ -274,8 +274,8 @@ export default function App() {
             background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', fontSize: 14,
           }}>
             {initialLoadDone
-              ? 'Connexion au serveur lente ou perdue — nouvelle tentative en cours, les données affichées peuvent être légèrement en retard.'
-              : "Connexion à la base de données... si c'est la première requête depuis un moment, la base Azure SQL (serverless) peut mettre jusqu'à une minute à se réveiller."}
+              ? 'Connection to the server is slow or was lost — retrying now, displayed data may be slightly out of date.'
+              : "Connecting to the database... if this is the first request in a while, the Azure SQL (serverless) database can take up to a minute to wake up."}
           </div>
         )}
 
