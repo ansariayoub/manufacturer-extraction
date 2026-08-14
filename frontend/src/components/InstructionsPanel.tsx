@@ -6,6 +6,7 @@ const PRESETS: Array<[string, string]> = [
   ['Brackets are credits', 'Figures in parentheses or brackets are credits — map them as negative net sales.'],
   ['Split multi-sheet workbooks', 'Each worksheet is a separate region; extract all sheets and merge into one canonical set.'],
   ['Trust printed totals', 'If a printed totals row disagrees with the sum of lines, flag it and keep the line-level sum.'],
+  ['Only read one sheet', 'Only read the sheet named "Commissions"; ignore all other sheets in this workbook.'],
 ];
 
 interface Props {
@@ -36,8 +37,10 @@ export function InstructionsPanel({ instructions, onInstructionsChange }: Props)
         </button>
       </div>
       <div style={{ color: 'var(--muted)', fontSize: 13, marginTop: 4 }}>
-        Applied by the canonical mapper to every file you upload next. These rules take precedence
-        over the default extraction rules wherever the two disagree.
+        Applied to every file you upload next. Most rules guide the canonical mapper and take
+        precedence over its default extraction rules; a rule that names a specific sheet (e.g.
+        "only read the sheet named ...") also restricts which sheet gets read in the first place,
+        for .xlsx/.xls files.
       </div>
 
       {open && (

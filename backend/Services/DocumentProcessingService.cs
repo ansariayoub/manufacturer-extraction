@@ -66,8 +66,14 @@ public class DocumentProcessingService : IDocumentProcessingService
                 {
                     // Spreadsheets are read cell by cell here rather than sent to Content
                     // Understanding — see SpreadsheetExtractionService for why.
+                    var sheetFilter = CustomInstructionsParser.TryExtractSheetFilter(document.CustomInstructions);
+                    if (sheetFilter is not null)
+                        _logger.LogInformation(
+                            "Restricting document {DocumentId} extraction to sheet '{Sheet}' per custom instructions",
+                            documentId, sheetFilter);
+
                     await using var stream = await _blobStorage.DownloadAsync(document.BlobUrl);
-                    rawJson = await _spreadsheetExtraction.ExtractAsync(stream, document.OriginalFileName, ct);
+                    rawJson = await _spreadsheetExtraction.ExtractAsync(stream, document.OriginalFileName, ct, sheetFilter);
                 }
                 else
                 {

@@ -26,3 +26,4 @@ Thumbs.db
 .vscode/
 .idea/
 .claude/settings.local.json
+backend/run-debug*.log
