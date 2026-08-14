@@ -14,10 +14,17 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(
         builder.Configuration.GetConnectionString("AzureSql"),
-        sqlOptions => sqlOptions.EnableRetryOnFailure(
-            maxRetryCount: 5,
-            maxRetryDelay: TimeSpan.FromSeconds(15),
-            errorNumbersToAdd: null)));
+        sqlOptions => sqlOptions
+            .EnableRetryOnFailure(
+                maxRetryCount: 5,
+                maxRetryDelay: TimeSpan.FromSeconds(15),
+                errorNumbersToAdd: null)
+            // The default 30s command timeout is too short for the largest source files: a single
+            // RawExtraction write for a ~75k-row workbook has been observed taking ~48s, which
+            // always failed with "Timeout expired" right as it was about to succeed. 180s gives
+            // large writes (and the occasional Azure SQL serverless cold-start) enough room without
+            // masking a genuinely hung query forever.
+            .CommandTimeout(180)));
 
 builder.Services.AddHttpClient<IContentUnderstandingService, ContentUnderstandingService>();
 
