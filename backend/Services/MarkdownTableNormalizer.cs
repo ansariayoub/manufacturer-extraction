@@ -35,7 +35,7 @@ internal static class MarkdownTableNormalizer
         @"(^|\s|_)(DT|DATE|DATES)($|\s|_)|DATE", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static readonly Regex TotalRowRegex = new(
-        @"^\s*(grand\s+)?(total|totals|subtotal|sub-total|sum)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        @"^\s*((grand|overall)\s+)?(total|totals|subtotal|sub-total|sum|result)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     // Excel's day zero. Excel wrongly treats 1900 as a leap year, which is why the epoch is the
     // 30th and not the 31st of December 1899.
@@ -275,11 +275,17 @@ internal static class MarkdownTableNormalizer
     private static bool IsNoteRow(List<string> row) =>
         row.Count(c => c.Length > 0) == 1;
 
-    private static bool IsTotalRow(List<string> row)
-    {
-        var first = row.FirstOrDefault(c => c.Length > 0);
-        return first is not null && TotalRowRegex.IsMatch(first);
-    }
+    /// <summary>
+    /// A row is an aggregate — never a real transaction — if ANY of its cells reads like a total
+    /// label, not just the first one. Multi-level pivot/SAP-style exports nest several tiers of
+    /// subtotal (by product group, then customer, then division, then a grand total), and which
+    /// column carries the label shifts depending on how many grouping levels are collapsed on that
+    /// particular row — checking only the first cell missed most of them on a real 1738-row export
+    /// (the "Result" marker for a customer-level subtotal sits in the product-group column, for
+    /// example, while the row still starts with a real division code).
+    /// </summary>
+    private static bool IsTotalRow(List<string> row) =>
+        row.Any(c => c.Length > 0 && TotalRowRegex.IsMatch(c));
 
     private static bool IsNumeric(string s) =>
         double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out _);
