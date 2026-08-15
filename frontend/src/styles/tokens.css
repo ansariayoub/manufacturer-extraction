@@ -43,7 +43,10 @@ a:hover { color: var(--blue-deep); }
 ::selection { background: #d8e6f4; }
 ::placeholder { color: var(--muted); }
 
-table { border-collapse: collapse; width: 100%; }
+/* table-layout: fixed makes the <th> width hints authoritative — without it, a single unbreakable
+   long string (e.g. a long custom-instructions badge) forces its column to grow past its declared
+   width, pushing every column after it outside the card. */
+table { border-collapse: collapse; width: 100%; table-layout: fixed; }
 th {
   text-align: left;
   font-size: 11px;
