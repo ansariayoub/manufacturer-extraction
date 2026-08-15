@@ -16,11 +16,13 @@ export function DocumentQueueTable({ documents, loading = false, onOpen, onRemov
       <table>
         <thead>
           <tr>
-            <th style={{ width: '30%' }}>File</th>
-            <th style={{ width: '19%' }}>Pipeline</th>
+            <th style={{ width: '28%' }}>File</th>
+            <th style={{ width: '17%' }}>Pipeline</th>
             <th style={{ width: '11%', textAlign: 'right' }}>Total net sales</th>
             <th style={{ width: '11%', textAlign: 'right' }}>Total commissions</th>
-            <th style={{ width: '1%', textAlign: 'right', whiteSpace: 'nowrap' }}>Inspect</th>
+            {/* Fixed px, not '1%' — table-layout: fixed takes declared widths literally, it no
+                longer shrinks this column to fit its three pill buttons the way auto layout did. */}
+            <th style={{ width: 250, textAlign: 'right', whiteSpace: 'nowrap' }}>Inspect</th>
             <th style={{ width: 48 }} />
           </tr>
         </thead>
