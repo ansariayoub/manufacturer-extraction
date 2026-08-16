@@ -39,7 +39,7 @@ public class SpreadsheetExtractionService : ISpreadsheetExtractionService
 
     public SpreadsheetExtractionService(ILogger<SpreadsheetExtractionService> logger) => _logger = logger;
 
-    public async Task<string> ExtractAsync(Stream fileStream, string fileName, CancellationToken ct, string? onlySheetName = null)
+    public async Task<string> ExtractAsync(Stream fileStream, string fileName, CancellationToken ct, IReadOnlyCollection<string>? onlySheetNames = null)
     {
         // Blob downloads hand back a forward-only network stream, but both the zip (.xlsx) and
         // the BIFF (.xls) readers need to seek. Buffer first.
@@ -55,7 +55,7 @@ public class SpreadsheetExtractionService : ISpreadsheetExtractionService
 
         try
         {
-            return Extract(seekable, fileName, ct, onlySheetName);
+            return Extract(seekable, fileName, ct, onlySheetNames);
         }
         finally
         {
@@ -63,13 +63,14 @@ public class SpreadsheetExtractionService : ISpreadsheetExtractionService
         }
     }
 
-    private string Extract(Stream fileStream, string fileName, CancellationToken ct, string? onlySheetName)
+    private string Extract(Stream fileStream, string fileName, CancellationToken ct, IReadOnlyCollection<string>? onlySheetNames)
     {
         using var reader = ExcelReaderFactory.CreateReader(fileStream);
 
         var contents = new List<object>();
         var totalRows = 0;
         var skippedSheets = new List<string>();
+        var wantedSheets = onlySheetNames?.Select(n => n.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         do
         {
@@ -80,7 +81,7 @@ public class SpreadsheetExtractionService : ISpreadsheetExtractionService
             // Skip the whole sheet up front — not just its rows downstream — so a workbook with
             // several large unrelated tabs doesn't pay to read, store, and chunk data nobody asked
             // for. reader.Read() below still has to be called to advance past this sheet's rows.
-            var wanted = onlySheetName is null || string.Equals(sheetName.Trim(), onlySheetName.Trim(), StringComparison.OrdinalIgnoreCase);
+            var wanted = wantedSheets is null || wantedSheets.Contains(sheetName.Trim());
             if (!wanted)
             {
                 skippedSheets.Add(sheetName);
@@ -114,13 +115,13 @@ public class SpreadsheetExtractionService : ISpreadsheetExtractionService
         }
         while (reader.NextResult());
 
-        if (onlySheetName is not null && contents.Count == 0)
+        if (wantedSheets is not null && contents.Count == 0)
         {
-            // The requested sheet name didn't match anything — fail open rather than silently
+            // None of the requested sheet names matched anything — fail open rather than silently
             // returning an empty document. skippedSheets lists what the workbook actually has, so
             // the error is directly actionable (usually a typo or slightly different sheet name).
             throw new InvalidOperationException(
-                $"No sheet named '{onlySheetName}' was found in '{fileName}'. " +
+                $"No sheet named {string.Join(" or ", wantedSheets.Select(n => $"'{n}'"))} was found in '{fileName}'. " +
                 $"Sheets present: {string.Join(", ", skippedSheets)}.");
         }
 

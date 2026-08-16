@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text.RegularExpressions;
 
 namespace ManufacturerExtraction.Api.Services;
@@ -57,6 +58,39 @@ public static partial class CustomInstructionsParser
 
         name = name?.Trim();
         return string.IsNullOrEmpty(name) ? null : name;
+    }
+
+    // Captures the list-of-names span after "read the sheets ...", up to the first sentence
+    // boundary (an em/en dash, a period followed by space/end, or a semicolon) so a trailing
+    // exclusion clause ("— ignore ...") never becomes part of the list.
+    [GeneratedRegex(
+        """read\s+(?:only\s+)?the\s+sheets\s+(?<list>.+?)(?:\s*[—–]|\s*--|\.(?:\s|$)|;)""",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex SheetsReadDirectiveRegex();
+
+    private static readonly Regex QuotedNameRegex = new("""["“'](?<name>[^"”']+)["”']""", RegexOptions.Compiled);
+
+    /// <summary>
+    /// Returns every sheet name a "read the sheets "A", "B" and "C"" (plural) directive lists, or
+    /// null if the instructions don't use that plural form — see <see cref="TryExtractSheetFilter"/>
+    /// for the singular case. A document naming several sheets this way previously fell through to
+    /// no deterministic filtering at all (the singular-only parser never matched "sheets"), leaving
+    /// the model to guess sheet inclusion/exclusion from free text alone across dozens of chunks —
+    /// unreliable exactly the way pinning a single money column was before it became deterministic.
+    /// </summary>
+    public static List<string>? TryExtractSheetFilters(string? customInstructions)
+    {
+        if (string.IsNullOrWhiteSpace(customInstructions)) return null;
+
+        var listMatch = SheetsReadDirectiveRegex().Match(customInstructions);
+        if (!listMatch.Success) return null;
+
+        var names = QuotedNameRegex.Matches(listMatch.Groups["list"].Value)
+            .Select(m => m.Groups["name"].Value.Trim())
+            .Where(n => n.Length > 0)
+            .ToList();
+
+        return names.Count > 0 ? names : null;
     }
 
     // Matches things like:
