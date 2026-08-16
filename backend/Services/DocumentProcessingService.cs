@@ -154,7 +154,14 @@ public class DocumentProcessingService : IDocumentProcessingService
             }
             else if (detectedRows > 0 && result.Report.Sales.Count < detectedRows * 0.85)
             {
-                warnings.Add($"Coverage: {result.Report.Sales.Count} canonical lines for ~{detectedRows} source rows detected.");
+                // A custom instruction commonly filters rows on purpose (e.g. "only extract rows
+                // where the comment column reads exactly ..."), which trips this check even though
+                // nothing was lost. Say so rather than reading as an unconditional data-loss alarm —
+                // the raw numbers are still there for the operator to judge either way.
+                var maybeIntentional = !string.IsNullOrWhiteSpace(document.CustomInstructions)
+                    ? " This may be expected if your processing instructions intentionally filter rows — check them before assuming data loss."
+                    : "";
+                warnings.Add($"Coverage: {result.Report.Sales.Count} canonical lines for ~{detectedRows} source rows detected.{maybeIntentional}");
             }
 
             document.HasWarnings = warnings.Count > 0;
@@ -248,8 +255,14 @@ public class DocumentProcessingService : IDocumentProcessingService
                 // header noise and aggregate rows.
                 var normalized = MarkdownTableNormalizer.Normalize(markdown).Markdown;
 
+                // A workbook tab holding a handful of pre-computed totals (a "summary"/reference
+                // sheet sitting next to the real transaction sheets, e.g. one row per grand total)
+                // is not itself transaction data — including it in the denominator makes a
+                // perfectly complete extraction of the real sheets look like a coverage shortfall.
+                // 5 is deliberately small: a genuine transaction table this thin should still count.
                 total += AnalyticsTransformationService
                     .SplitTables(normalized)
+                    .Where(t => t.DataRows.Count >= 5)
                     .Sum(t => t.DataRows.Count);
             }
             return total;
