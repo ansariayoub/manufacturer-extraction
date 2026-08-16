@@ -37,4 +37,29 @@ public static partial class CustomInstructionsParser
         name = name.Trim();
         return name.Length > 0 ? name : null;
     }
+
+    // Matches things like:
+    //   use only the money column whose header starts with "Current Month Gross Sales"
+    //   only use the column that starts with "Current Month Gross Sales"
+    [GeneratedRegex(
+        """column[^"“'\n]*(?:starts?\s+with|begins?\s+with)\s+["“'](?<prefix>[^"”'\n]+)["”']""",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex MoneyColumnPrefixRegex();
+
+    /// <summary>
+    /// Returns the header prefix a "use only the column that starts with ..." directive names, or
+    /// null if the instructions don't pin one. Callers use this to physically remove every other
+    /// money-like column before the LLM ever sees the table — see the caller for why a text
+    /// instruction alone isn't reliable enough on documents with dozens of chunks.
+    /// </summary>
+    public static string? TryExtractMoneyColumnPrefix(string? customInstructions)
+    {
+        if (string.IsNullOrWhiteSpace(customInstructions)) return null;
+
+        var match = MoneyColumnPrefixRegex().Match(customInstructions);
+        if (!match.Success) return null;
+
+        var prefix = match.Groups["prefix"].Value.Trim();
+        return prefix.Length > 0 ? prefix : null;
+    }
 }

@@ -585,9 +585,11 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
         var rawMarkdown = ExtractMarkdown(rawExtractionJson);
 
         // Deterministic clean-up first: real header detection, merged-column de-duplication,
-        // Excel serial dates converted exactly, aggregate rows removed, float noise stripped.
-        // Everything this does was previously left to the model to do per row — and it drifted.
-        var normalized = MarkdownTableNormalizer.Normalize(rawMarkdown);
+        // Excel serial dates converted exactly, aggregate rows removed, float noise stripped, and —
+        // when the operator pinned one via custom instructions — every competing money column
+        // physically removed so the model has nothing left to drift into.
+        var moneyColumnPrefix = CustomInstructionsParser.TryExtractMoneyColumnPrefix(customInstructions);
+        var normalized = MarkdownTableNormalizer.Normalize(rawMarkdown, moneyColumnPrefix);
         _logger.LogInformation(
             "Markdown normalized: {Columns} duplicate/empty column(s) removed, {Totals} aggregate row(s) dropped",
             normalized.DroppedColumns, normalized.DroppedTotalRows);

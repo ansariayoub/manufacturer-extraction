@@ -34,6 +34,11 @@ internal static class MarkdownTableNormalizer
     private static readonly Regex DateHeaderRegex = new(
         @"(^|\s|_)(DT|DATE|DATES)($|\s|_)|DATE", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    // Header wording that marks a column as a plausible-but-wrong alternative to a pinned "current
+    // period" money column: a rolling/cumulative range, or a prior-year comparison.
+    private static readonly Regex AmbiguousMoneyColumnRegex = new(
+        @"\brange\b|\bprior\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     private static readonly Regex TotalRowRegex = new(
         @"^\s*((grand|overall)\s+)?(total|totals|subtotal|sub-total|sum|result)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
@@ -48,7 +53,7 @@ internal static class MarkdownTableNormalizer
 
     public sealed record Result(string Markdown, int DroppedTotalRows, int DroppedColumns);
 
-    public static Result Normalize(string markdown)
+    public static Result Normalize(string markdown, string? moneyColumnPrefix = null)
     {
         var lines = markdown.Replace("\r\n", "\n").Split('\n');
         var output = new StringBuilder();
@@ -73,7 +78,7 @@ internal static class MarkdownTableNormalizer
                 i++;
             }
 
-            var (text, totals, cols) = NormalizeBlock(block);
+            var (text, totals, cols) = NormalizeBlock(block, moneyColumnPrefix);
             output.Append(text);
             droppedTotals += totals;
             droppedCols += cols;
@@ -82,7 +87,8 @@ internal static class MarkdownTableNormalizer
         return new Result(output.ToString(), droppedTotals, droppedCols);
     }
 
-    private static (string Text, int DroppedTotals, int DroppedColumns) NormalizeBlock(List<string> block)
+    private static (string Text, int DroppedTotals, int DroppedColumns) NormalizeBlock(
+        List<string> block, string? moneyColumnPrefix)
     {
         var grid = block
             .Where(l => !SeparatorRegex.IsMatch(l))
@@ -144,6 +150,33 @@ internal static class MarkdownTableNormalizer
 
         var header = body[headerIdx];
         var dataRows = body.Skip(headerIdx + 1).ToList();
+
+        // An operator can pin the exact netSales column by header prefix (e.g. when a report has
+        // near-duplicate money columns — a "current month" figure next to a "current year range"
+        // or "prior year range" figure that happen to read identically for some periods and
+        // wildly differently for others). Removing the competing columns here, before the model
+        // ever sees them, is what makes the choice exact regardless of chunk count — a text
+        // instruction alone was observed to still drift on a ~1900-row, 15-chunk document.
+        if (!string.IsNullOrWhiteSpace(moneyColumnPrefix))
+        {
+            var pinnedCol = Enumerable.Range(0, header.Count)
+                .FirstOrDefault(c => header[c].StartsWith(moneyColumnPrefix, StringComparison.OrdinalIgnoreCase), -1);
+
+            if (pinnedCol >= 0)
+            {
+                var dropCols = Enumerable.Range(0, header.Count)
+                    .Where(c => c != pinnedCol && AmbiguousMoneyColumnRegex.IsMatch(header[c]))
+                    .ToHashSet();
+
+                if (dropCols.Count > 0)
+                {
+                    var survivors = Enumerable.Range(0, header.Count).Where(c => !dropCols.Contains(c)).ToList();
+                    header = survivors.Select(c => header[c]).ToList();
+                    dataRows = dataRows.Select(r => survivors.Select(c => r[c]).ToList()).ToList();
+                    droppedColumns += dropCols.Count;
+                }
+            }
+        }
 
         // Drop aggregate rows here rather than asking the model to recognise and skip them. This
         // also makes the "one row in, one row out" reconciliation exact.
