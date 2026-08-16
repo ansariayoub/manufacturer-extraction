@@ -10,32 +10,53 @@ namespace ManufacturerExtraction.Api.Services;
 /// </summary>
 public static partial class CustomInstructionsParser
 {
-    // Matches things like:
+    // Matches an explicit INCLUSION directive — "read the sheet ...", with or without
+    // "named"/"called" between "sheet" and the name:
     //   only read the sheet named "Commissions"
     //   read only the sheet called Commissions
-    //   sheet: Commissions
-    //   only use the "Commissions" sheet
+    //   only read the sheet "8215 Sales"
     [GeneratedRegex(
-        """(?:sheet\s*(?:name)?\s*[:=]\s*["“']?(?<name1>[^"”'\n,.]+)["”']?)|(?:sheet\s+(?:named|called)\s+["“']?(?<name2>[^"”'\n,.]+)["”']?)|(?:["“'](?<name3>[^"”']+)["”']\s+sheet\b)""",
+        """read\s+(?:only\s+)?the\s+sheet(?:\s+(?:named|called))?\s+["“']?(?<name>[^"”'\n,.;]+)["”']?""",
         RegexOptions.IgnoreCase)]
-    private static partial Regex SheetDirectiveRegex();
+    private static partial Regex SheetReadDirectiveRegex();
+
+    // "sheet: Commissions" / "sheet name: Commissions"
+    [GeneratedRegex(
+        """sheet\s*(?:name)?\s*[:=]\s*["“']?(?<name>[^"”'\n,.;]+)["”']?""",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex SheetColonDirectiveRegex();
+
+    // Loosest fallback — quoted text immediately followed by the word "sheet", e.g. "only use the
+    // "Commissions" sheet". Guarded against matching an EXCLUSION instead ("ignore the "X" sheet",
+    // "not the "X" sheet") via the negative lookbehind, since that phrasing names the sheet to skip,
+    // not the one to keep — see the real bug this guards against in TryExtractSheetFilter's doc.
+    [GeneratedRegex(
+        """(?<!ignor(?:e|ing)\s)(?<!not\s)(?<!skip\s)(?<!except\s)["“'](?<name>[^"”']+)["”']\s+sheet\b""",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex SheetQuotedFallbackRegex();
 
     /// <summary>
     /// Returns the sheet name to restrict extraction to, or null if the instructions don't name one.
+    ///
+    /// Checked in priority order — an explicit "read the sheet ..." always wins over the generic
+    /// quoted-text-then-"sheet" fallback. That fallback alone previously matched WHICHEVER sheet
+    /// name happened to be quoted-then-followed-by-"sheet" first in the text, including one named in
+    /// an exclusion clause: "Only read the sheet "8215 Sales"; ignore the "summary" sheet" locked
+    /// onto "summary" — the sheet the operator explicitly wanted excluded — because "summary" sheet"
+    /// matches that pattern and "sheet "8215 Sales"" (name comes AFTER "sheet", no colon) didn't
+    /// match any pattern at all. Real bug, observed in production logs.
     /// </summary>
     public static string? TryExtractSheetFilter(string? customInstructions)
     {
         if (string.IsNullOrWhiteSpace(customInstructions)) return null;
 
-        var match = SheetDirectiveRegex().Match(customInstructions);
-        if (!match.Success) return null;
+        var name = SheetReadDirectiveRegex().Match(customInstructions) is { Success: true } m1 ? m1.Groups["name"].Value
+            : SheetColonDirectiveRegex().Match(customInstructions) is { Success: true } m2 ? m2.Groups["name"].Value
+            : SheetQuotedFallbackRegex().Match(customInstructions) is { Success: true } m3 ? m3.Groups["name"].Value
+            : null;
 
-        var name = match.Groups["name1"].Success ? match.Groups["name1"].Value
-            : match.Groups["name2"].Success ? match.Groups["name2"].Value
-            : match.Groups["name3"].Value;
-
-        name = name.Trim();
-        return name.Length > 0 ? name : null;
+        name = name?.Trim();
+        return string.IsNullOrEmpty(name) ? null : name;
     }
 
     // Matches things like:
