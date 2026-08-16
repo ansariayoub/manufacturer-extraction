@@ -111,9 +111,18 @@ internal static class MarkdownTableNormalizer
             var nonEmpty = row.Where(c => c.Length > 0).ToList();
             if (nonEmpty.Count == 0) continue;
 
-            if (IsBannerRow(nonEmpty))
+            // A single non-numeric value alone in an otherwise-blank row, appearing before the real
+            // header is found, is a field-name preamble line — the vertical "one field per row"
+            // block some SAP-style exports prepend (e.g. "Sold-to party", "Material group", ... one
+            // per row, dozens of rows deep). Left in place these ate up FindHeaderRow's search
+            // window and pushed the real header out of range, defaulting to row 0 (a banner) as the
+            // "header" — which starved the whole document of any reliable column mapping.
+            var isFieldNamePreambleLine =
+                body.Count == 0 && nonEmpty.Count == 1 && !IsNumeric(nonEmpty[0]);
+
+            if (IsBannerRow(nonEmpty) || isFieldNamePreambleLine)
             {
-                if (body.Count == 0)
+                if (body.Count == 0 && !isFieldNamePreambleLine)
                 {
                     // Keep the longest variant: the title itself rather than a page marker or a
                     // print timestamp sharing the same row.
@@ -288,7 +297,9 @@ internal static class MarkdownTableNormalizer
         var best = -1;
         var bestScore = 0;
 
-        for (int r = 0; r < Math.Min(body.Count, 25); r++)
+        // 60, not 25: a defensive margin on top of the field-name-preamble filter above, in case a
+        // report has more preamble lines than that filter recognises (extra banner rows, etc.).
+        for (int r = 0; r < Math.Min(body.Count, 60); r++)
         {
             var cells = body[r].Where(c => c.Length > 0).ToList();
             if (cells.Count < 4) continue;
