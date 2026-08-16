@@ -117,4 +117,39 @@ public static partial class CustomInstructionsParser
         var prefix = match.Groups["prefix"].Value.Trim();
         return prefix.Length > 0 ? prefix : null;
     }
+
+    // Matches "On sheet(s) "A"[, "B"] use ["]COLUMN["] as netSales" clauses — repeatable, so a
+    // document with several sheet groups each needing a different money column (e.g. a workbook
+    // with FEI/Tigris/TDP tabs per product line, each using a differently-named "commissionable
+    // sales" column) can pin ALL of them, not just one global column across the whole file.
+    [GeneratedRegex(
+        """on\s+sheets?\s+(?<names>(?:["“'][^"”'\n]+["”']\s*(?:,\s*|and\s+)?)+)\s*use\s+(?:the\s+column\s+)?["“'](?<col>[^"”'\n]+)["”']\s+as\s+netsales""",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex PerSheetMoneyColumnRegex();
+
+    /// <summary>
+    /// Returns a sheet-name → column-prefix map for every "On sheet(s) ... use "COLUMN" as
+    /// netSales" clause in the instructions, or null if none are present. Callers apply each
+    /// sheet's own pinned column instead of one global one — see
+    /// <see cref="TryExtractMoneyColumnPrefix"/> for the single-column case this generalizes.
+    /// </summary>
+    public static Dictionary<string, string>? TryExtractPerSheetMoneyColumnPrefixes(string? customInstructions)
+    {
+        if (string.IsNullOrWhiteSpace(customInstructions)) return null;
+
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (Match clause in PerSheetMoneyColumnRegex().Matches(customInstructions))
+        {
+            var col = clause.Groups["col"].Value.Trim();
+            if (col.Length == 0) continue;
+
+            foreach (Match nameMatch in QuotedNameRegex.Matches(clause.Groups["names"].Value))
+            {
+                var sheet = nameMatch.Groups["name"].Value.Trim();
+                if (sheet.Length > 0) map[sheet] = col;
+            }
+        }
+
+        return map.Count > 0 ? map : null;
+    }
 }

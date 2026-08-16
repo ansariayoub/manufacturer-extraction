@@ -51,20 +51,32 @@ internal static class MarkdownTableNormalizer
     private const double MinSerial = 20_000;
     private const double MaxSerial = 65_000;
 
+    // SpreadsheetExtractionService marks the start of each sheet's markdown with "# {sheetName}".
+    // Tracking the most recent one lets a per-sheet pinned column apply to the right table when a
+    // workbook's sheets each need a different money column (see perSheetMoneyColumnPrefixes below).
+    private static readonly Regex SheetHeadingRegex = new(@"^#\s+(?<name>.+?)\s*$", RegexOptions.Compiled);
+
     public sealed record Result(string Markdown, int DroppedTotalRows, int DroppedColumns);
 
-    public static Result Normalize(string markdown, string? moneyColumnPrefix = null)
+    public static Result Normalize(
+        string markdown,
+        string? moneyColumnPrefix = null,
+        IReadOnlyDictionary<string, string>? perSheetMoneyColumnPrefixes = null)
     {
         var lines = markdown.Replace("\r\n", "\n").Split('\n');
         var output = new StringBuilder();
         var droppedTotals = 0;
         var droppedCols = 0;
+        string? currentSheet = null;
 
         int i = 0;
         while (i < lines.Length)
         {
             if (!TableRowRegex.IsMatch(lines[i]))
             {
+                var headingMatch = SheetHeadingRegex.Match(lines[i]);
+                if (headingMatch.Success) currentSheet = headingMatch.Groups["name"].Value;
+
                 output.AppendLine(lines[i]);
                 i++;
                 continue;
@@ -78,7 +90,13 @@ internal static class MarkdownTableNormalizer
                 i++;
             }
 
-            var (text, totals, cols) = NormalizeBlock(block, moneyColumnPrefix);
+            var effectivePrefix = currentSheet is not null
+                && perSheetMoneyColumnPrefixes is not null
+                && perSheetMoneyColumnPrefixes.TryGetValue(currentSheet, out var pinned)
+                ? pinned
+                : moneyColumnPrefix;
+
+            var (text, totals, cols) = NormalizeBlock(block, effectivePrefix);
             output.Append(text);
             droppedTotals += totals;
             droppedCols += cols;

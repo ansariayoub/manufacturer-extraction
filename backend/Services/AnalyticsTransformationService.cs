@@ -194,21 +194,37 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
 
     internal record TableParts(string Preamble, string HeaderBlock, List<string> DataRows);
 
+    private static readonly Regex SheetHeadingInPreambleRegex = new(@"^#\s+(?<name>.+?)\s*$", RegexOptions.Compiled | RegexOptions.Multiline);
+
     /// <summary>
     /// Reads the pinned money column's value straight from each source data row, in the same
     /// document order chunks are built in (tables in order, each table's DataRows in order) — the
     /// exact order allSales ends up in when the model preserves row order, which is separately
     /// enforced and verified. Returns null (meaning: don't trust this, skip the override) if any
-    /// table with data rows doesn't have the pinned column, rather than risk a partial/misaligned
-    /// correction.
+    /// table with data rows doesn't have a resolvable pinned column, rather than risk a
+    /// partial/misaligned correction.
+    ///
+    /// A workbook whose sheets each need a different money column (e.g. one column per product
+    /// line, differently named per sheet) resolves each table's prefix from perSheetPrefixes,
+    /// keyed by the "# SheetName" heading SpreadsheetExtractionService writes ahead of that
+    /// sheet's table — falling back to the single global prefix for sheets not named there.
     /// </summary>
-    private static List<double?>? ExtractPinnedColumnValues(List<TableParts> tables, string prefix)
+    private static List<double?>? ExtractPinnedColumnValues(
+        List<TableParts> tables, string? globalPrefix, IReadOnlyDictionary<string, string>? perSheetPrefixes)
     {
         var values = new List<double?>();
 
         foreach (var table in tables)
         {
             if (table.DataRows.Count == 0) continue;
+
+            var sheetName = SheetHeadingInPreambleRegex.Match(table.Preamble) is { Success: true } hm
+                ? hm.Groups["name"].Value : null;
+            var prefix = sheetName is not null && perSheetPrefixes is not null
+                && perSheetPrefixes.TryGetValue(sheetName, out var pinned)
+                ? pinned
+                : globalPrefix;
+            if (prefix is null) return null;
 
             var headerLine = table.HeaderBlock.Split('\n')[0];
             var headerCells = SplitMarkdownRow(headerLine);
@@ -630,7 +646,8 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
         // when the operator pinned one via custom instructions — every competing money column
         // physically removed so the model has nothing left to drift into.
         var moneyColumnPrefix = CustomInstructionsParser.TryExtractMoneyColumnPrefix(customInstructions);
-        var normalized = MarkdownTableNormalizer.Normalize(rawMarkdown, moneyColumnPrefix);
+        var perSheetMoneyColumnPrefixes = CustomInstructionsParser.TryExtractPerSheetMoneyColumnPrefixes(customInstructions);
+        var normalized = MarkdownTableNormalizer.Normalize(rawMarkdown, moneyColumnPrefix, perSheetMoneyColumnPrefixes);
         _logger.LogInformation(
             "Markdown normalized: {Columns} duplicate/empty column(s) removed, {Totals} aggregate row(s) dropped",
             normalized.DroppedColumns, normalized.DroppedTotalRows);
@@ -704,9 +721,9 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
         // long, many-chunk documents (e.g. one row out of 1594 on a real file). "ONE ROW IN, ONE ROW
         // OUT" is already enforced and verified by row-count reconciliation, so positional
         // correspondence between the source rows and allSales is safe to rely on here.
-        if (!string.IsNullOrWhiteSpace(moneyColumnPrefix))
+        if (!string.IsNullOrWhiteSpace(moneyColumnPrefix) || perSheetMoneyColumnPrefixes is not null)
         {
-            var pinnedValues = ExtractPinnedColumnValues(tables, moneyColumnPrefix);
+            var pinnedValues = ExtractPinnedColumnValues(tables, moneyColumnPrefix, perSheetMoneyColumnPrefixes);
             if (pinnedValues is not null && pinnedValues.Count == allSales.Count)
             {
                 for (int i = 0; i < allSales.Count; i++)
