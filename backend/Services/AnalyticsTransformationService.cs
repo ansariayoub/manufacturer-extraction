@@ -336,12 +336,25 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
     /// commission rate stated in the sheet header — exactly what the pivot and "rates in header"
     /// rules need in order to pick the right column).
     /// </summary>
-    internal static List<Chunk> BuildChunks(List<TableParts> tables, int targetRowsPerChunk)
+    internal static List<Chunk> BuildChunks(List<TableParts> tables, int targetRowsPerChunk) =>
+        BuildChunksWithTableBoundaries(tables, targetRowsPerChunk).Chunks;
+
+    /// <summary>
+    /// Same output as <see cref="BuildChunks"/>, plus how many consecutive chunks each table
+    /// contributed — chunks for one table are always contiguous (the loop below finishes a table
+    /// before starting the next), so this is enough to slice a flat chunk-results array back into
+    /// per-table groups without needing row counts, which can't be trusted to still line up once
+    /// the model has dropped or added rows.
+    /// </summary>
+    internal static (List<Chunk> Chunks, List<int> ChunksPerTable) BuildChunksWithTableBoundaries(
+        List<TableParts> tables, int targetRowsPerChunk)
     {
         var chunks = new List<Chunk>();
+        var chunksPerTable = new List<int>();
 
         for (int t = 0; t < tables.Count; t++)
         {
+            var countBefore = chunks.Count;
             var parts = tables[t];
             var label = tables.Count > 1 ? $"table {t + 1} of {tables.Count}" : "document";
 
@@ -361,6 +374,7 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
                     current.AppendLine(p).AppendLine();
                 }
                 if (current.Length > 0) chunks.Add(new Chunk(current.ToString(), 0, label));
+                chunksPerTable.Add(chunks.Count - countBefore);
                 continue;
             }
 
@@ -377,9 +391,11 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
 
                 chunks.Add(new Chunk(sb.ToString(), slice.Count, label));
             }
+
+            chunksPerTable.Add(chunks.Count - countBefore);
         }
 
-        return chunks;
+        return (chunks, chunksPerTable);
     }
 
     /// <summary>Cuts an already-built chunk in half, keeping the header and preamble in both halves.</summary>
@@ -653,7 +669,7 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
             normalized.DroppedColumns, normalized.DroppedTotalRows);
 
         var tables = SplitTables(normalized.Markdown);
-        var chunks = BuildChunks(tables, TargetRowsPerChunk);
+        var (chunks, chunksPerTable) = BuildChunksWithTableBoundaries(tables, TargetRowsPerChunk);
 
         // One cheap call decides the column mapping for the whole document, before any row is
         // extracted. Every chunk then receives that same decision as a binding constraint.
@@ -718,16 +734,31 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
         // transcribed every figure correctly — read it back from the source deterministically and
         // overwrite. The model is still the one deciding row order/skipping/customer fields; this
         // only replaces the one number it has been observed to occasionally mistranscribe on very
-        // long, many-chunk documents (e.g. one row out of 1594 on a real file). "ONE ROW IN, ONE ROW
-        // OUT" is already enforced and verified by row-count reconciliation, so positional
-        // correspondence between the source rows and allSales is safe to rely on here.
+        // long, many-chunk documents.
+        //
+        // Applied per TABLE, not once across the whole document: chunk boundaries never cross a
+        // table (chunksPerTable records exactly how many consecutive chunks belong to each one), so
+        // a single table's chunk(s) dropping a row only breaks the safety check — and therefore only
+        // forfeits the override — for THAT table. A whole-document check was observed to throw away
+        // the override for every sheet in a 6-sheet workbook because one sheet lost a handful of
+        // rows, even though the other five were extracted perfectly.
         if (!string.IsNullOrWhiteSpace(moneyColumnPrefix) || perSheetMoneyColumnPrefixes is not null)
         {
-            var pinnedValues = ExtractPinnedColumnValues(tables, moneyColumnPrefix, perSheetMoneyColumnPrefixes);
-            if (pinnedValues is not null && pinnedValues.Count == allSales.Count)
+            var chunkCursor = 0;
+            for (int t = 0; t < tables.Count; t++)
             {
-                for (int i = 0; i < allSales.Count; i++)
-                    allSales[i].NetSales = pinnedValues[i];
+                var chunkCount = chunksPerTable[t];
+                var tableSales = Enumerable.Range(chunkCursor, chunkCount)
+                    .SelectMany(i => results[i] ?? new List<AnalyticsTransaction>())
+                    .ToList();
+                chunkCursor += chunkCount;
+
+                var tablePinnedValues = ExtractPinnedColumnValues(
+                    new List<TableParts> { tables[t] }, moneyColumnPrefix, perSheetMoneyColumnPrefixes);
+                if (tablePinnedValues is null || tablePinnedValues.Count != tableSales.Count) continue;
+
+                for (int i = 0; i < tableSales.Count; i++)
+                    tableSales[i].NetSales = tablePinnedValues[i];
             }
         }
 
