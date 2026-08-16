@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.ClientModel;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -192,6 +193,46 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
     internal static readonly Regex TableSeparatorRegex = new(@"^\s*\|[\s:\-\|]+\|\s*$", RegexOptions.Compiled);
 
     internal record TableParts(string Preamble, string HeaderBlock, List<string> DataRows);
+
+    /// <summary>
+    /// Reads the pinned money column's value straight from each source data row, in the same
+    /// document order chunks are built in (tables in order, each table's DataRows in order) — the
+    /// exact order allSales ends up in when the model preserves row order, which is separately
+    /// enforced and verified. Returns null (meaning: don't trust this, skip the override) if any
+    /// table with data rows doesn't have the pinned column, rather than risk a partial/misaligned
+    /// correction.
+    /// </summary>
+    private static List<double?>? ExtractPinnedColumnValues(List<TableParts> tables, string prefix)
+    {
+        var values = new List<double?>();
+
+        foreach (var table in tables)
+        {
+            if (table.DataRows.Count == 0) continue;
+
+            var headerLine = table.HeaderBlock.Split('\n')[0];
+            var headerCells = SplitMarkdownRow(headerLine);
+            var pinnedIdx = headerCells.FindIndex(h => h.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+            if (pinnedIdx < 0) return null;
+
+            foreach (var row in table.DataRows)
+            {
+                var cells = SplitMarkdownRow(row);
+                var raw = pinnedIdx < cells.Count ? cells[pinnedIdx] : "";
+                values.Add(double.TryParse(raw, NumberStyles.Any, CultureInfo.InvariantCulture, out var d) ? d : null);
+            }
+        }
+
+        return values;
+    }
+
+    private static List<string> SplitMarkdownRow(string line)
+    {
+        var trimmed = line.Trim();
+        if (trimmed.StartsWith("|")) trimmed = trimmed[1..];
+        if (trimmed.EndsWith("|")) trimmed = trimmed[..^1];
+        return trimmed.Split('|').Select(c => c.Trim()).ToList();
+    }
 
     /// <summary>
     /// Finds EVERY markdown table in the document, not just the first one.
@@ -654,6 +695,23 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
         {
             if (sale.NetSales.HasValue) sale.NetSales = Math.Round(sale.NetSales.Value, 2);
             if (sale.Commission.HasValue) sale.Commission = Math.Round(sale.Commission.Value, 2);
+        }
+
+        // When the operator pinned an exact netSales column, don't trust the model to have
+        // transcribed every figure correctly — read it back from the source deterministically and
+        // overwrite. The model is still the one deciding row order/skipping/customer fields; this
+        // only replaces the one number it has been observed to occasionally mistranscribe on very
+        // long, many-chunk documents (e.g. one row out of 1594 on a real file). "ONE ROW IN, ONE ROW
+        // OUT" is already enforced and verified by row-count reconciliation, so positional
+        // correspondence between the source rows and allSales is safe to rely on here.
+        if (!string.IsNullOrWhiteSpace(moneyColumnPrefix))
+        {
+            var pinnedValues = ExtractPinnedColumnValues(tables, moneyColumnPrefix);
+            if (pinnedValues is not null && pinnedValues.Count == allSales.Count)
+            {
+                for (int i = 0; i < allSales.Count; i++)
+                    allSales[i].NetSales = pinnedValues[i];
+            }
         }
 
         var rowsSent = chunks.Sum(c => c.RowCount);
