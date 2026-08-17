@@ -20,7 +20,14 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
     // How many table rows we try to fit in a single model call. This is what replaces the old
     // hard 180,000-character cutoff: instead of truncating the document, we now process it in
     // full, just split across several calls.
-    private const int TargetRowsPerChunk = 200;
+    //
+    // Lowered from 200: tables landing just under the old limit (188 rows, 199 rows — big enough to
+    // stay in ONE call, not big enough to force a split) were repeatedly observed fabricating or
+    // dropping a handful of rows within that single call, on real DURAVIT files, across multiple
+    // reanalyze attempts. Smaller sheets (under ~100 rows) never showed this. Forcing a split well
+    // before 200 trades a few more model calls for the reliability the deterministic netSales
+    // override depends on — it only engages when a table's row count matches exactly.
+    private const int TargetRowsPerChunk = 90;
 
     // Floor for the split-on-truncation recursion. Below this many rows we stop splitting and
     // record a warning instead of looping forever.
