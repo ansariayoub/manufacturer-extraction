@@ -101,17 +101,31 @@ public static partial class CustomInstructionsParser
         RegexOptions.IgnoreCase)]
     private static partial Regex MoneyColumnPrefixRegex();
 
+    // Matches the exact-name form, without "starts with":
+    //   use the column "2026 Invoiced price" as netSales
+    //   use "2026 Invoiced price" as netSales
+    // Deliberately NOT anchored to the start of the instructions, and independent from the
+    // per-sheet "on sheet(s) ... use ... as netSales" clauses above — a document can have a single
+    // global one of these, several per-sheet ones, or (harmlessly) both, since the per-sheet map
+    // always wins for tables it names and this is only the fallback for the rest.
+    [GeneratedRegex(
+        """use\s+(?:the\s+column\s+)?["“'](?<prefix>[^"”'\n]+)["”']\s+as\s+netsales""",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex MoneyColumnExactRegex();
+
     /// <summary>
-    /// Returns the header prefix a "use only the column that starts with ..." directive names, or
-    /// null if the instructions don't pin one. Callers use this to physically remove every other
-    /// money-like column before the LLM ever sees the table — see the caller for why a text
-    /// instruction alone isn't reliable enough on documents with dozens of chunks.
+    /// Returns the header prefix/name a "use ... as netSales" directive names — either the
+    /// "starts with" form or the exact-name form — or null if the instructions don't pin one.
+    /// Callers use this to physically remove every other money-like column before the LLM ever sees
+    /// the table — see the caller for why a text instruction alone isn't reliable enough on
+    /// documents with dozens of chunks.
     /// </summary>
     public static string? TryExtractMoneyColumnPrefix(string? customInstructions)
     {
         if (string.IsNullOrWhiteSpace(customInstructions)) return null;
 
         var match = MoneyColumnPrefixRegex().Match(customInstructions);
+        if (!match.Success) match = MoneyColumnExactRegex().Match(customInstructions);
         if (!match.Success) return null;
 
         var prefix = match.Groups["prefix"].Value.Trim();
