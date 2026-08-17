@@ -22,6 +22,12 @@ jobs:
       - name: Build And Deploy
         id: builddeploy
         uses: Azure/static-web-apps-deploy@v1
+        env:
+          # Vite bakes env vars into the bundle AT BUILD TIME. Without this, the app falls back to
+          # its localhost:5193 default, which only ever works on the developer's own machine —
+          # anyone else visiting the deployed site gets a frontend silently calling their own,
+          # nonexistent localhost backend, with every request failing.
+          VITE_API_BASE_URL: https://manufacturer-extraction-api.azurewebsites.net
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_AGREEABLE_MOSS_0065FD60F }}
           repo_token: ${{ secrets.GITHUB_TOKEN }} # Used for Github integrations (i.e. PR comments)
