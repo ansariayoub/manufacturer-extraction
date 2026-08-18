@@ -29,7 +29,12 @@ public class DocumentProcessingQueue : IDocumentProcessingQueue
 /// </summary>
 public class DocumentProcessingWorker : BackgroundService
 {
-    private const int MaxConcurrentDocuments = 2;
+    // Raised from 2 to 4: with only 2 slots, dropping more than a couple of files at once left
+    // most of them sitting in "Queued" until the first two finished, even though Azure OpenAI
+    // had headroom left. Each document itself caps at MaxConcurrentChunksPerDocument (3) calls,
+    // so this puts the worst-case burst at ~12 concurrent model calls instead of ~6 — still well
+    // covered by AnalyticsTransformationService's retry-on-429 logic (MaxTransientRetries = 5).
+    private const int MaxConcurrentDocuments = 4;
 
     private readonly IDocumentProcessingQueue _queue;
     private readonly IServiceScopeFactory _scopeFactory;
