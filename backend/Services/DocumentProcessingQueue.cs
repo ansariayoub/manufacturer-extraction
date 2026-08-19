@@ -29,12 +29,13 @@ public class DocumentProcessingQueue : IDocumentProcessingQueue
 /// </summary>
 public class DocumentProcessingWorker : BackgroundService
 {
-    // Raised from 2 to 4: with only 2 slots, dropping more than a couple of files at once left
-    // most of them sitting in "Queued" until the first two finished, even though Azure OpenAI
-    // had headroom left. Each document itself caps at MaxConcurrentChunksPerDocument (3) calls,
-    // so this puts the worst-case burst at ~12 concurrent model calls instead of ~6 — still well
-    // covered by AnalyticsTransformationService's retry-on-429 logic (MaxTransientRetries = 5).
-    private const int MaxConcurrentDocuments = 4;
+    // Raised 2 -> 4 -> 10 by request, to let large batches move through faster. Each document
+    // itself caps at MaxConcurrentChunksPerDocument (3) calls, so worst case is now ~30 concurrent
+    // Azure OpenAI calls instead of ~6 originally. AnalyticsTransformationService retries on 429
+    // (MaxTransientRetries = 5), which covers occasional throttling, but if the gpt-5.2 deployment's
+    // rate limit is lower than this can sustain, expect more retries/slowdowns under full load —
+    // check the deployment's quota in Azure AI Foundry (Models + endpoints) if that happens.
+    private const int MaxConcurrentDocuments = 10;
 
     private readonly IDocumentProcessingQueue _queue;
     private readonly IServiceScopeFactory _scopeFactory;
