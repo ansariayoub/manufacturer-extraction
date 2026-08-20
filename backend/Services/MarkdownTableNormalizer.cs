@@ -42,6 +42,15 @@ internal static class MarkdownTableNormalizer
     private static readonly Regex TotalRowRegex = new(
         @"^\s*((grand|overall)\s+)?(total|totals|subtotal|sub-total|sum|result)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    // Matches a cell that IS a grand-total row label and nothing else — "Grand Total", or Excel's
+    // French pivot-table label "Total général" (the "." tolerates both a correctly-decoded é and
+    // the "�" mojibake byte some of these exports arrive with). Deliberately narrower than
+    // TotalRowRegex above: "Totals for Rep No 90" or "Subtotal" must NOT match here, because those
+    // mark one of several subtotal rows inside an otherwise flat table (Bobrick), not the single
+    // trailing aggregate of a hierarchical pivot (Eemax) — see LooksLikeHierarchicalPivot.
+    private static readonly Regex GrandTotalRowRegex = new(
+        @"^(grand total|total g.n.ral)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     // Excel's day zero. Excel wrongly treats 1900 as a leap year, which is why the epoch is the
     // 30th and not the 31st of December 1899.
     private static readonly DateTime ExcelEpoch = new(1899, 12, 30);
@@ -56,7 +65,7 @@ internal static class MarkdownTableNormalizer
     // workbook's sheets each need a different money column (see perSheetMoneyColumnPrefixes below).
     private static readonly Regex SheetHeadingRegex = new(@"^#\s+(?<name>.+?)\s*$", RegexOptions.Compiled);
 
-    public sealed record Result(string Markdown, int DroppedTotalRows, int DroppedColumns);
+    public sealed record Result(string Markdown, int DroppedTotalRows, int DroppedColumns, bool HasCollapsedPivotRows);
 
     public static Result Normalize(
         string markdown,
@@ -67,6 +76,7 @@ internal static class MarkdownTableNormalizer
         var output = new StringBuilder();
         var droppedTotals = 0;
         var droppedCols = 0;
+        var collapsedPivot = false;
         string? currentSheet = null;
 
         int i = 0;
@@ -96,16 +106,17 @@ internal static class MarkdownTableNormalizer
                 ? pinned
                 : moneyColumnPrefix;
 
-            var (text, totals, cols) = NormalizeBlock(block, effectivePrefix);
+            var (text, totals, cols, collapsed) = NormalizeBlock(block, effectivePrefix);
             output.Append(text);
             droppedTotals += totals;
             droppedCols += cols;
+            collapsedPivot |= collapsed;
         }
 
-        return new Result(output.ToString(), droppedTotals, droppedCols);
+        return new Result(output.ToString(), droppedTotals, droppedCols, collapsedPivot);
     }
 
-    private static (string Text, int DroppedTotals, int DroppedColumns) NormalizeBlock(
+    private static (string Text, int DroppedTotals, int DroppedColumns, bool CollapsedPivot) NormalizeBlock(
         List<string> block, string? moneyColumnPrefix)
     {
         var grid = block
@@ -113,7 +124,7 @@ internal static class MarkdownTableNormalizer
             .Select(SplitCells)
             .ToList();
 
-        if (grid.Count == 0) return (string.Join("\n", block) + "\n", 0, 0);
+        if (grid.Count == 0) return (string.Join("\n", block) + "\n", 0, 0, false);
 
         var width = grid.Max(r => r.Count);
         foreach (var row in grid)
@@ -159,7 +170,7 @@ internal static class MarkdownTableNormalizer
         {
             var bannerOnly = new StringBuilder();
             foreach (var p in preamble) bannerOnly.AppendLine(p);
-            return (bannerOnly.ToString(), 0, 0);
+            return (bannerOnly.ToString(), 0, 0, false);
         }
 
         var keep = SelectColumns(body, width);
@@ -205,10 +216,42 @@ internal static class MarkdownTableNormalizer
             }
         }
 
-        // Drop aggregate rows here rather than asking the model to recognise and skip them. This
-        // also makes the "one row in, one row out" reconciliation exact.
-        var droppedTotals = dataRows.Count(IsTotalRow);
-        dataRows = dataRows.Where(r => !IsTotalRow(r)).ToList();
+        // Hierarchical Excel PivotTable: customer > sub-account > order > invoice, where a parent
+        // row's amount is exactly repeated by its own descendants (a customer with one order and
+        // one line shows the same dollar figure three times, once per nesting level). There is no
+        // reliable per-row signal distinguishing a "real" leaf row from a repeated parent total in
+        // this shape — unlike Bobrick/SAP-style reports, none of the intermediate rows are labelled
+        // "Total" — so summing the raw rows (or asking the model to) over- or under-counts by
+        // 30-75%, observed on real Eemax exports. When the table also ends in an unambiguous
+        // "Grand Total" / "Total général" row, trust that single figure — it is the workbook's own
+        // correct aggregate — instead of the detail rows above it.
+        var grandTotalIdx = FindGrandTotalRow(dataRows);
+        var isHierarchicalPivot = grandTotalIdx >= 0 && LooksLikeHierarchicalPivot(dataRows, grandTotalIdx);
+
+        int droppedTotals;
+        if (isHierarchicalPivot)
+        {
+            droppedTotals = dataRows.Count - 1;
+
+            // The model is separately instructed (base system prompt) to skip any row whose cells
+            // read like an aggregate label — "Total", "Grand Total", etc. — which is exactly right
+            // for the ordinary case but would make it silently discard the one row we just went out
+            // of our way to keep. Relabel it to a plain entity name so it reads as real data instead
+            // of a total to be skipped; the values themselves are untouched.
+            var keptRow = dataRows[grandTotalIdx].ToList();
+            for (int c = 0; c < keptRow.Count; c++)
+                if (GrandTotalRowRegex.IsMatch(keptRow[c].Trim()))
+                    keptRow[c] = "ALL CUSTOMERS COMBINED";
+
+            dataRows = new List<List<string>> { keptRow };
+        }
+        else
+        {
+            // Drop aggregate rows here rather than asking the model to recognise and skip them.
+            // This also makes the "one row in, one row out" reconciliation exact.
+            droppedTotals = dataRows.Count(IsTotalRow);
+            dataRows = dataRows.Where(r => !IsTotalRow(r)).ToList();
+        }
 
         // Footnote rows — a single populated cell in a wide table, e.g. the trailing
         // "Applied filters: Post Date is on or after ..." line these exports end with. They are
@@ -242,7 +285,7 @@ internal static class MarkdownTableNormalizer
         foreach (var note in notes)
             sb.AppendLine().AppendLine(note);
 
-        return (sb.ToString(), droppedTotals, droppedColumns);
+        return (sb.ToString(), droppedTotals, droppedColumns, isHierarchicalPivot);
     }
 
     private static List<string> SplitCells(string line)
@@ -348,6 +391,49 @@ internal static class MarkdownTableNormalizer
     /// </summary>
     private static bool IsTotalRow(List<string> row) =>
         row.Any(c => c.Length > 0 && TotalRowRegex.IsMatch(c));
+
+    /// <summary>Index of the single unambiguous "Grand Total"/"Total général" row, or -1.</summary>
+    private static int FindGrandTotalRow(List<List<string>> dataRows)
+    {
+        for (int r = 0; r < dataRows.Count; r++)
+            if (dataRows[r].Any(c => GrandTotalRowRegex.IsMatch(c.Trim())))
+                return r;
+        return -1;
+    }
+
+    /// <summary>
+    /// True when a large share of the OTHER rows (excluding the grand total row itself) share an
+    /// exact numeric fingerprint with some other row — the signature of a PivotTable outline, where
+    /// a parent row's total is repeated verbatim by each of its descendants down to the leaf. Real
+    /// transaction rows essentially never coincide on every money column at once across 30%+ of a
+    /// multi-hundred-row table, so this only fires on the shape it is meant for.
+    /// </summary>
+    private static bool LooksLikeHierarchicalPivot(List<List<string>> dataRows, int grandTotalIdx)
+    {
+        var others = dataRows.Where((_, i) => i != grandTotalIdx).ToList();
+        if (others.Count < 5) return false;
+
+        var width = others[0].Count;
+        var numericColumns = Enumerable.Range(0, width)
+            .Where(c => others.Count(r => IsNumeric(r[c])) >= others.Count * 0.5)
+            .ToList();
+        if (numericColumns.Count == 0) return false;
+
+        var seen = new HashSet<string>();
+        var duplicates = 0;
+        var nonBlank = 0;
+        foreach (var row in others)
+        {
+            var values = numericColumns.Select(c => row[c]).ToList();
+            if (values.All(v => v.Length == 0)) continue;
+
+            nonBlank++;
+            var key = string.Join("|", values);
+            if (!seen.Add(key)) duplicates++;
+        }
+
+        return nonBlank > 0 && duplicates >= nonBlank * 0.3;
+    }
 
     private static bool IsNumeric(string s) =>
         double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out _);
