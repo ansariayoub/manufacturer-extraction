@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Threading.Channels;
 using ManufacturerExtraction.Api.Services.Interfaces;
 
@@ -17,7 +18,21 @@ public class DocumentProcessingQueue : IDocumentProcessingQueue
     private readonly Channel<Guid> _channel = Channel.CreateUnbounded<Guid>(
         new UnboundedChannelOptions { SingleReader = false, SingleWriter = false });
 
-    public void Enqueue(Guid documentId) => _channel.Writer.TryWrite(documentId);
+    // Tracks documents that are already queued or actively being processed, so a duplicate
+    // /analyze or /reanalyze call (double-click, or a retry racing the original request) can't
+    // hand the same document id to two workers at once. Without this, both workers ran the full
+    // pipeline in parallel and the second one's INSERT into AnalyticsExtractions hit the unique
+    // index on DocumentId, failing the document outright — observed in production once worker
+    // count went up, which made the race far more likely to actually land.
+    private readonly ConcurrentDictionary<Guid, byte> _inFlight = new();
+
+    public void Enqueue(Guid documentId)
+    {
+        if (_inFlight.TryAdd(documentId, 0))
+            _channel.Writer.TryWrite(documentId);
+    }
+
+    public void MarkFinished(Guid documentId) => _inFlight.TryRemove(documentId, out _);
 
     public IAsyncEnumerable<Guid> ReadAllAsync(CancellationToken ct) =>
         _channel.Reader.ReadAllAsync(ct);
@@ -91,6 +106,7 @@ public class DocumentProcessingWorker : BackgroundService
             finally
             {
                 _cancellationRegistry.Remove(documentId);
+                _queue.MarkFinished(documentId);
             }
         }
     }

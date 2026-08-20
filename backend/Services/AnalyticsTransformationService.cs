@@ -56,7 +56,12 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
 
         var clientOptions = new AzureOpenAIClientOptions
         {
-            NetworkTimeout = TimeSpan.FromMinutes(10)
+            // Lowered from 10 minutes: the SDK's own ClientRetryPolicy retries a stalled HTTP call
+            // internally (a few attempts) before giving up, so a 10-minute budget per attempt meant
+            // a single chunk could burn up to ~40 minutes before our own retry loop below ever saw
+            // the failure. 5 minutes is still generous for one chunk (capped at 90 rows) and lets
+            // failures surface — and get retried with backoff — much sooner.
+            NetworkTimeout = TimeSpan.FromMinutes(5)
         };
 
         var azureClient = new AzureOpenAIClient(new Uri(endpoint), new AzureKeyCredential(apiKey), clientOptions);
@@ -138,13 +143,41 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
     /// precedence rule — not in the user message where they sat behind ~25 imperative default
     /// rules and lost every conflict (e.g. "ignore the YTD block" vs. the pivot rule above).
     /// </summary>
-    private static string BuildSystemPrompt(string? customInstructions, string? columnPlan = null)
+    private static string BuildSystemPrompt(string? customInstructions, string? columnPlan = null, bool hasCollapsedPivotRows = false)
     {
         var prompt = BaseSystemPrompt;
 
         // The column map goes before the user overrides so that operator instructions still win.
         if (!string.IsNullOrWhiteSpace(columnPlan))
             prompt = $"{prompt}\n\n{columnPlan}";
+
+        // A hierarchical Excel PivotTable (Eemax's "PT-578 C1"/"C2" sheets, for example) was already
+        // collapsed by MarkdownTableNormalizer down to its single Grand Total row, relabelled
+        // "ALL CUSTOMERS COMBINED" precisely so it doesn't visually read as a total. Without this,
+        // the model still recognised it AS an aggregate by meaning rather than by keyword and
+        // silently returned zero rows for the whole table — observed on real Eemax files even after
+        // the relabel. Spelling out the exception explicitly is what stops that.
+        if (hasCollapsedPivotRows)
+        {
+            prompt = $"""
+                {prompt}
+
+                ============ PRE-COLLAPSED PIVOT ROW — READ CAREFULLY ============
+                At least one table below originally had many nested subtotal rows: a hierarchical
+                Excel PivotTable outline where the same dollar amount repeats at every level of a
+                customer > sub-account > order > invoice-line hierarchy. There is no reliable way to
+                attribute that amount to one specific leaf entity, so a deterministic pass already
+                collapsed the WHOLE table down to a single row holding the workbook's own correct
+                Grand Total for the period, and labelled it "ALL CUSTOMERS COMBINED".
+                This row is real data, not a total/subtotal to skip, even though it summarizes many
+                customers and even though the rule above says to skip aggregate rows — that rule does
+                not apply here. If you see a table whose only row is named "ALL CUSTOMERS COMBINED",
+                you MUST extract it exactly like any other row: set customerName to
+                "ALL CUSTOMERS COMBINED" and map its money columns normally. Returning zero rows for
+                such a table is a data-loss bug, not a correct application of the skip-aggregates rule.
+                ====================================================================
+                """;
+        }
 
         if (string.IsNullOrWhiteSpace(customInstructions)) return prompt;
 
@@ -683,7 +716,7 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
         var columnPlan = await BuildColumnPlanAsync(
             tables, customInstructions, fallbackManufacturer, fallbackPeriodMonth, fallbackPeriodYear, ct);
 
-        var systemPrompt = BuildSystemPrompt(customInstructions, columnPlan);
+        var systemPrompt = BuildSystemPrompt(customInstructions, columnPlan, normalized.HasCollapsedPivotRows);
 
         var results = new List<AnalyticsTransaction>?[chunks.Count];
         var warnings = new ConcurrentBag<string>();
@@ -938,8 +971,28 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
                     delay.TotalSeconds, attempt, MaxTransientRetries);
                 await Task.Delay(delay, ct);
             }
+            // The underlying transport (System.ClientModel's ClientRetryPolicy) retries a stalled
+            // HTTP call internally, then gives up by throwing an AggregateException — NOT a plain
+            // TaskCanceledException — once it has exhausted its own attempts. That exception type
+            // never matched the catch above, so every chunk that hit this path failed permanently
+            // on its very first attempt through OUR loop, silently dropping ~90 rows from the
+            // totals each time. Unwrap and treat the same timeout as transient here too.
+            catch (AggregateException ex) when (!ct.IsCancellationRequested
+                && attempt < MaxTransientRetries
+                && IsTimeoutAggregate(ex))
+            {
+                var delay = TimeSpan.FromSeconds(Math.Pow(2, attempt) + jitter.NextDouble() * 2);
+                _logger.LogWarning("Azure OpenAI call timed out (transport-level retry exhausted); retrying in {Delay}s (attempt {Attempt}/{Max})",
+                    delay.TotalSeconds, attempt, MaxTransientRetries);
+                await Task.Delay(delay, ct);
+            }
         }
     }
+
+    private static bool IsTimeoutAggregate(AggregateException ex) =>
+        ex.InnerExceptions.Any(inner => inner is TaskCanceledException or TimeoutException
+            || inner is IOException
+            || (inner is System.Net.Sockets.SocketException));
 
     private static bool IsTransient(int status) =>
         status == 429 || status == 408 || status >= 500;
