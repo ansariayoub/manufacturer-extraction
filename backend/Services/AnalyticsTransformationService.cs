@@ -33,19 +33,19 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
     // record a warning instead of looping forever.
     private const int MinRowsToSplit = 4;
 
-    // Per-document concurrency. Kept modest because several documents are now processed in
-    // parallel by the background worker pool as well — the product of the two is what Azure sees.
-    private const int MaxConcurrentChunksPerDocument = 3;
-
     // Retries per model call for transient Azure failures (429 throttling above all).
     private const int MaxTransientRetries = 5;
 
     // Sheet-level context (report title, period, commission rates) repeated in every chunk.
     private const int MaxPreambleChars = 2_000;
 
-    public AnalyticsTransformationService(IConfiguration config, ILogger<AnalyticsTransformationService> logger)
+    private readonly OpenAiConcurrencyLimiter _limiter;
+
+    public AnalyticsTransformationService(
+        IConfiguration config, ILogger<AnalyticsTransformationService> logger, OpenAiConcurrencyLimiter limiter)
     {
         _logger = logger;
+        _limiter = limiter;
 
         var endpoint = config["AzureOpenAI:Endpoint"]
             ?? throw new InvalidOperationException("Azure OpenAI endpoint missing");
@@ -721,12 +721,14 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
         var results = new List<AnalyticsTransaction>?[chunks.Count];
         var warnings = new ConcurrentBag<string>();
         var completed = 0;
-        var throttle = new SemaphoreSlim(MaxConcurrentChunksPerDocument);
         var progressLock = new SemaphoreSlim(1, 1);
 
         var tasks = chunks.Select(async (chunk, i) =>
         {
-            await throttle.WaitAsync(ct);
+            // Shared across every document being processed right now, not just this one — see
+            // OpenAiConcurrencyLimiter for why a per-document limit alone let concurrent uploads
+            // multiply the actual load on Azure OpenAI far past its real quota.
+            await _limiter.WaitAsync(ct);
             try
             {
                 results[i] = await TransformChunkWithRetryAsync(
@@ -747,7 +749,7 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
             }
             finally
             {
-                throttle.Release();
+                _limiter.Release();
             }
 
             var done = Interlocked.Increment(ref completed);

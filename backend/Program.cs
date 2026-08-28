@@ -46,6 +46,9 @@ builder.Services.AddCors(options =>
 
 builder.Services.AddSingleton<IProcessingCancellationRegistry, ProcessingCancellationRegistry>();
 builder.Services.AddSingleton<IDocumentProcessingQueue, DocumentProcessingQueue>();
+// Shared across every document being processed, not per document — see OpenAiConcurrencyLimiter
+// for why AnalyticsTransformationService's own local semaphore (it is AddScoped) wasn't enough.
+builder.Services.AddSingleton<OpenAiConcurrencyLimiter>();
 builder.Services.AddHostedService<DocumentProcessingWorker>();
 
 var app = builder.Build();
