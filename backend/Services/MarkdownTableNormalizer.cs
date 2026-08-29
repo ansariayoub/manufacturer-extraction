@@ -35,9 +35,16 @@ internal static class MarkdownTableNormalizer
         @"(^|\s|_)(DT|DATE|DATES)($|\s|_)|DATE", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     // Header wording that marks a column as a plausible-but-wrong alternative to a pinned "current
-    // period" money column: a rolling/cumulative range, or a prior-year comparison.
+    // period" money column: a rolling/cumulative range, a prior-year comparison, a SAP monthly
+    // breakdown column (M01..M12, with the first one usually prefixed "ACT"), or a SAP fiscal-YTD
+    // range like "ACT 01..06". Observed on real Geberit exports: one report carries six near-
+    // identical monthly Sales/USD columns plus a cumulative one side by side, and — same lesson as
+    // "range"/"prior" above — a text instruction alone was not enough to keep the model on the one
+    // column asked for once the document spans enough chunks; the wrong columns must be physically
+    // removed before the model ever sees them.
     private static readonly Regex AmbiguousMoneyColumnRegex = new(
-        @"\brange\b|\bprior\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        @"\brange\b|\bprior\b|^py\b|^(act\s+)?m\d{2}\b|^act\s+\d{2}\.\.\d{2}",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static readonly Regex TotalRowRegex = new(
         @"^\s*((grand|overall)\s+)?(total|totals|subtotal|sub-total|sum|result)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
