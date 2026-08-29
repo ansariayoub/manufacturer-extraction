@@ -797,10 +797,47 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
 
                 var tablePinnedValues = ExtractPinnedColumnValues(
                     new List<TableParts> { tables[t] }, moneyColumnPrefix, perSheetMoneyColumnPrefixes);
-                if (tablePinnedValues is null || tablePinnedValues.Count != tableSales.Count) continue;
+                if (tablePinnedValues is null) continue;
 
-                for (int i = 0; i < tableSales.Count; i++)
-                    tableSales[i].NetSales = tablePinnedValues[i];
+                if (tablePinnedValues.Count == tableSales.Count)
+                {
+                    for (int i = 0; i < tableSales.Count; i++)
+                        tableSales[i].NetSales = tablePinnedValues[i];
+                    continue;
+                }
+
+                // Row counts don't line up (the model added or dropped a row somewhere across this
+                // table's chunks), so per-row alignment above isn't safe — but the pinned column's
+                // SUM across the whole table needs no alignment at all, and it is exactly right
+                // regardless of row count. Rescale every row so the table's total matches that sum
+                // precisely, instead of leaving whatever the model produced unguarded. This is what
+                // catches the failure mode a per-row-only check cannot: once a large document loses
+                // the thread across dozens of chunks, the model's own total can land anywhere —
+                // observed reaching the billions on a real multi-hundred-row document — and nothing
+                // upstream of this point would otherwise notice.
+                if (tableSales.Count == 0) continue;
+
+                var detTotal = tablePinnedValues.Where(v => v.HasValue).Sum(v => v!.Value);
+                var llmTotal = tableSales.Sum(s => s.NetSales ?? 0);
+
+                if (Math.Abs(llmTotal) > 0.01)
+                {
+                    var scale = detTotal / llmTotal;
+                    foreach (var sale in tableSales)
+                        if (sale.NetSales.HasValue) sale.NetSales = Math.Round(sale.NetSales.Value * scale, 2);
+                }
+                else
+                {
+                    // Nothing to scale (the model reported ~$0 across the board) — spread the real
+                    // total evenly rather than silently leave it at zero.
+                    var each = Math.Round(detTotal / tableSales.Count, 2);
+                    foreach (var sale in tableSales) sale.NetSales = each;
+                }
+
+                warnings.Add(
+                    $"{tables[t].Preamble.Trim().Split('\n').FirstOrDefault() ?? "A table"}: row count from the " +
+                    $"model ({tableSales.Count}) didn't match the source ({tablePinnedValues.Count}), so per-row " +
+                    "figures were rescaled to match the pinned column's true total rather than left as reported.");
             }
         }
 
