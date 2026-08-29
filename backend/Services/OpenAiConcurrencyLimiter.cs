@@ -23,7 +23,14 @@ public class OpenAiConcurrencyLimiter
     // Tune this to the Azure OpenAI deployment's actual rate limit (Azure AI Foundry -> Models +
     // endpoints -> the gpt-5.2 deployment -> quota). If chunks still throttle heavily with this
     // value, lower it; if the deployment has real headroom to spare, it can go up.
-    private const int MaxConcurrentCalls = 8;
+    //
+    // Checked against the real deployment: 15,000,000 TPM / 150,000 RPM. A chunk call (a ~90-row
+    // table plus schema and system prompt) is nowhere near large enough to make 8 concurrent calls
+    // the real ceiling here — that number was a conservative guess made before the quota was known,
+    // and it was the actual bottleneck behind documents taking far longer than they needed to.
+    // Raised 5x; there is still enormous headroom left at this value (40 concurrent calls is a
+    // small fraction of either limit) to go higher later if throughput needs it.
+    private const int MaxConcurrentCalls = 40;
 
     private readonly SemaphoreSlim _semaphore = new(MaxConcurrentCalls);
 
