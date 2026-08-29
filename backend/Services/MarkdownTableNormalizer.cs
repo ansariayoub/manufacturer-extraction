@@ -47,7 +47,13 @@ internal static class MarkdownTableNormalizer
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static readonly Regex TotalRowRegex = new(
-        @"^\s*((grand|overall)\s+)?(total|totals|subtotal|sub-total|sum|result)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        // Second alternative catches the abbreviated form some reports pack into the SAME cell as
+        // a code, e.g. "N1850  TOT" as a rep-level rollup sitting right next to that rep's grand
+        // total — anchored at start doesn't help here since the code comes first, so this matches
+        // "TOT" as a trailing whole word instead. Missing this let a real Ideal Sales report's
+        // rep-total row survive as ordinary data and double-count the document's total outright.
+        @"^\s*((grand|overall)\s+)?(total|totals|subtotal|sub-total|sum|result)\b|\btot\b\s*$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     // Matches a cell that IS a grand-total row label and nothing else — "Grand Total", or Excel's
     // French pivot-table label "Total général" (the "." tolerates both a correctly-decoded é and
@@ -362,12 +368,25 @@ internal static class MarkdownTableNormalizer
     /// </summary>
     private static int FindHeaderRow(List<List<string>> body)
     {
+        // Bound the search to BEFORE real data starts. Without this, a report with a mid-table
+        // page break — a repeated column-header row after a page banner, common on paginated
+        // exports — could out-score the real header (more distinct cells, e.g. an extra column
+        // that only appears on later pages) and win outright, since the loop below picks the
+        // single highest-scoring candidate anywhere in its window with no notion of "too late".
+        // That silently discarded every real row above the repeated header as preamble — observed
+        // losing roughly two-thirds of a real Ideal Sales report's total this way. A header can
+        // only legitimately appear before the first row that already looks like data (several
+        // numeric cells); once that line has been seen, any later header-shaped row is a repeat,
+        // not the one that determines where data begins.
+        var firstDataRowIdx = body.FindIndex(r => r.Count(IsNumeric) >= 2);
+        var scanLimit = firstDataRowIdx >= 0 ? firstDataRowIdx : body.Count;
+
         var best = -1;
         var bestScore = 0;
 
         // 60, not 25: a defensive margin on top of the field-name-preamble filter above, in case a
         // report has more preamble lines than that filter recognises (extra banner rows, etc.).
-        for (int r = 0; r < Math.Min(body.Count, 60); r++)
+        for (int r = 0; r < Math.Min(scanLimit, 60); r++)
         {
             var cells = body[r].Where(c => c.Length > 0).ToList();
             if (cells.Count < 4) continue;
