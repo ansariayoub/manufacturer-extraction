@@ -102,6 +102,28 @@ public class SpreadsheetExtractionService : ISpreadsheetExtractionService
 
             if (rows.Count == 0) continue;
 
+            // SAP BEx exports (Geberit and others) carry a few sheets that are pure metadata, never
+            // transaction data: "SEnn" holds the query's own selection criteria ("Selektion" as its
+            // first cell), and "TXnn" holds a text/code translation lookup (its first cell reads
+            // "BI-Query mit Texten..."), typically thousands of rows of unrelated codes and labels.
+            // Neither has anything resembling a netSales column, so the deterministic pinned-column
+            // safety net has nothing to check them against — a model that fabricates "sales" rows
+            // out of these tables (observed on a real Geberit file: totals in the billions) sails
+            // straight through unguarded. They are identified by content, not sheet name, since
+            // naming isn't consistent across exports.
+            // The signature cell isn't always the very first row — TX-style sheets lead with a
+            // generic "Info" row before the one that actually names the sheet — so check the first
+            // couple of rows rather than only rows[0].
+            var isMetadataSheet = rows.Take(2)
+                .SelectMany(r => r)
+                .Any(c => c.Equals("Selektion", StringComparison.OrdinalIgnoreCase)
+                    || c.StartsWith("BI-Query mit Texten", StringComparison.OrdinalIgnoreCase));
+            if (isMetadataSheet)
+            {
+                skippedSheets.Add(sheetName);
+                continue;
+            }
+
             TrimTrailingEmptyColumns(rows);
             totalRows += rows.Count;
 
