@@ -290,14 +290,20 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
     // "Total Territory Sales: 146350.98" as its own line near the end. Column alignment is
     // unreliable on that report (rows vary in cell count row to row), so this deliberately searches
     // raw markdown text rather than a fixed column index.
+    // Second alternative catches a MotorScrubber/Western Sales export style: a "Grand Summary:" row
+    // sitting right under the header, in a table where every real line's "Total excl. shipping" is
+    // actually the PARENT INVOICE's total repeated on every item line of that invoice (not a
+    // per-item amount) — so summing the model's extracted rows naturally double-counts any invoice
+    // with more than one line, and there is no per-row fix for that short of re-deriving invoice
+    // grouping. The "Grand Summary:" row states the real total in plain text instead.
     private static readonly Regex LabeledGrandTotalRegex = new(
-        @"\btotal\s+\w+\s+sales\s*:", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        @"\btotal\s+\w+\s+sales\s*:|\bgrand\s+summary\s*:", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // Searched against the ORIGINAL, un-normalized markdown — not a table's DataRows — because this
-    // label's own row also matches TotalRowRegex (it starts with "Total") and is dropped as an
-    // aggregate row well before DataRows is populated, same as any other total row. That drop is
-    // correct for the row's role as a subtotal in the detail table; it just also happens to be the
-    // one place this document states its real answer in plain text.
+    // label's own row also matches TotalRowRegex (it starts with "Total"/"Grand Summary") and is
+    // dropped as an aggregate row well before DataRows is populated, same as any other total row.
+    // That drop is correct for the row's role as a subtotal in the detail table; it just also
+    // happens to be the one place this document states its real answer in plain text.
     private static double? FindLabeledGrandTotal(string rawMarkdown)
     {
         foreach (var row in rawMarkdown.Split('\n'))
@@ -305,11 +311,18 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
             var match = LabeledGrandTotalRegex.Match(row);
             if (!match.Success) continue;
 
-            var numberMatch = Regex.Match(row[(match.Index + match.Length)..], @"-?[\d,]*\d\.?\d*");
-            if (numberMatch.Success
-                && double.TryParse(numberMatch.Value.Replace(",", ""), NumberStyles.Any, CultureInfo.InvariantCulture, out var value))
+            // The LAST number on the line, not the first: a markdown table row can carry other
+            // numeric columns (e.g. a "Total Quantity" count) between the label and the actual money
+            // total, which sits in the rightmost/money column — as seen on the MotorScrubber
+            // "Grand Summary:" row ("| Grand Summary: | | | | | 4 | 2396.14 |", where the first
+            // number after the label is the quantity 4, not the $2,396.14 total).
+            var numberMatches = Regex.Matches(row[(match.Index + match.Length)..], @"-?[\d,]*\d\.?\d*");
+            for (int m = numberMatches.Count - 1; m >= 0; m--)
             {
-                return value;
+                if (double.TryParse(numberMatches[m].Value.Replace(",", ""), NumberStyles.Any, CultureInfo.InvariantCulture, out var value))
+                {
+                    return value;
+                }
             }
         }
 

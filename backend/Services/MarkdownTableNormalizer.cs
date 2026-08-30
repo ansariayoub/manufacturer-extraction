@@ -52,7 +52,10 @@ internal static class MarkdownTableNormalizer
         // total — anchored at start doesn't help here since the code comes first, so this matches
         // "TOT" as a trailing whole word instead. Missing this let a real Ideal Sales report's
         // rep-total row survive as ordinary data and double-count the document's total outright.
-        @"^\s*((grand|overall)\s+)?(total|totals|subtotal|sub-total|sum|result)\b|\btot\b\s*$",
+        // "summary" catches a MotorScrubber/Western Sales export's leading "Grand Summary:" row,
+        // which otherwise survives as a fake line item (its own "Total excl. shipping" cell equals
+        // the document's real grand total, which is not a per-item sale).
+        @"^\s*((grand|overall)\s+)?(total|totals|subtotal|sub-total|sum|result|summary)\b|\btot\b\s*$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     // Matches a cell that IS a grand-total row label and nothing else — "Grand Total", or Excel's
