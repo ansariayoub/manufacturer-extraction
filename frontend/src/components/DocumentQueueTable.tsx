@@ -5,7 +5,7 @@ interface Props {
   documents: DocumentSummary[];
   /** True during the very first load — shows placeholder rows instead of the "empty" message. */
   loading?: boolean;
-  onOpen: (id: string, tab: 'source' | 'extract' | 'canon') => void;
+  onOpen: (id: string, tab: 'source' | 'extract' | 'canon' | 'instructions') => void;
   onRemove: (id: string) => void;
   onReanalyze: (id: string) => void;
 }
@@ -136,6 +136,11 @@ export function DocumentQueueTable({ documents, loading = false, onOpen, onRemov
                 </td>
                 <td style={{ paddingTop: 12 }}>
                   <div style={{ display: 'flex', gap: 7, justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
+                    {doc.customInstructions && (
+                      <button className="pill" style={{ fontSize: 12.5, padding: '6px 13px' }} onClick={() => onOpen(doc.id, 'instructions')}>
+                        Instructions
+                      </button>
+                    )}
                     <button className="pill" style={{ fontSize: 12.5, padding: '6px 13px' }} onClick={() => onOpen(doc.id, 'source')}>
                       Input file
                     </button>

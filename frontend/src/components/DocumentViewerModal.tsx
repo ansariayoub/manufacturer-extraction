@@ -3,7 +3,7 @@ import type { MouseEvent } from 'react';
 import type { DocumentDetail } from '../types';
 import { money, monthLabel } from '../utils/format';
 
-type Tab = 'source' | 'extract' | 'canon';
+type Tab = 'source' | 'extract' | 'canon' | 'instructions';
 type CanonView = 'table' | 'json';
 
 interface Props {
@@ -42,6 +42,17 @@ const preStyle: React.CSSProperties = {
 export function DocumentViewerModal({ doc, initialTab, onClose }: Props) {
   const [tab, setTab] = useState<Tab>(initialTab);
   const [canonView, setCanonView] = useState<CanonView>('table');
+  const [copied, setCopied] = useState(false);
+
+  async function copyInstructions() {
+    try {
+      await navigator.clipboard.writeText(doc.customInstructions ?? '');
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      // Clipboard access can be blocked by the browser; the text is still selectable by hand.
+    }
+  }
 
   const isPdf = /\.pdf$/i.test(doc.fileName);
   const baseName = doc.fileName.replace(/\.[^.]+$/, '');
@@ -78,6 +89,9 @@ export function DocumentViewerModal({ doc, initialTab, onClose }: Props) {
             </span>
           </span>
           <span style={{ display: 'flex', marginLeft: 'auto', gap: 7, alignItems: 'center', flex: 'none' }}>
+            {doc.customInstructions && (
+              <TabButton active={tab === 'instructions'} onClick={() => setTab('instructions')}>Instructions</TabButton>
+            )}
             <TabButton active={tab === 'source'} onClick={() => setTab('source')}>Input file</TabButton>
             <TabButton active={tab === 'extract'} onClick={() => setTab('extract')}>Extracted data</TabButton>
             <TabButton active={tab === 'canon'} onClick={() => setTab('canon')}>Canonical data</TabButton>
@@ -96,6 +110,24 @@ export function DocumentViewerModal({ doc, initialTab, onClose }: Props) {
         </div>
 
         <div style={{ overflow: 'auto', padding: 22, background: 'var(--bg)' }}>
+          {tab === 'instructions' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div className="lbl">Processing instructions — exactly as sent with this file</div>
+                <button
+                  className="pill"
+                  style={{ marginLeft: 'auto', color: 'var(--blue)' }}
+                  onClick={copyInstructions}
+                >
+                  {copied ? 'Copied!' : 'Copy'}
+                </button>
+              </div>
+              <pre style={{ ...preStyle, whiteSpace: 'pre-wrap', userSelect: 'text' }}>
+                {doc.customInstructions}
+              </pre>
+            </div>
+          )}
+
           {tab === 'source' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div className="lbl">{isPdf ? 'Original PDF' : 'Original workbook'} — as uploaded</div>

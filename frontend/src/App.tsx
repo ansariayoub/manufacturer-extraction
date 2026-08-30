@@ -33,7 +33,7 @@ export default function App() {
   const [instructions, setInstructions] = useState('');
 
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
-  const [viewer, setViewer] = useState<{ id: string; tab: 'source' | 'extract' | 'canon' } | null>(null);
+  const [viewer, setViewer] = useState<{ id: string; tab: 'source' | 'extract' | 'canon' | 'instructions' } | null>(null);
   const [viewerDoc, setViewerDoc] = useState<DocumentDetail | null>(null);
 
   const [initialLoadDone, setInitialLoadDone] = useState(false);
@@ -199,7 +199,7 @@ export default function App() {
     refreshFull();
   }
 
-  async function handleOpen(id: string, tab: 'source' | 'extract' | 'canon') {
+  async function handleOpen(id: string, tab: 'source' | 'extract' | 'canon' | 'instructions') {
     setViewer({ id, tab });
     try {
       const detail = await getDocument(id);
