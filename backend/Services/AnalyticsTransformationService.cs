@@ -703,7 +703,8 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
         // physically removed so the model has nothing left to drift into.
         var moneyColumnPrefix = CustomInstructionsParser.TryExtractMoneyColumnPrefix(customInstructions);
         var perSheetMoneyColumnPrefixes = CustomInstructionsParser.TryExtractPerSheetMoneyColumnPrefixes(customInstructions);
-        var normalized = MarkdownTableNormalizer.Normalize(rawMarkdown, moneyColumnPrefix, perSheetMoneyColumnPrefixes);
+        var perSheetRowFilters = CustomInstructionsParser.TryExtractRowFilters(customInstructions);
+        var normalized = MarkdownTableNormalizer.Normalize(rawMarkdown, moneyColumnPrefix, perSheetMoneyColumnPrefixes, perSheetRowFilters);
         _logger.LogInformation(
             "Markdown normalized: {Columns} duplicate/empty column(s) removed, {Totals} aggregate row(s) dropped",
             normalized.DroppedColumns, normalized.DroppedTotalRows);

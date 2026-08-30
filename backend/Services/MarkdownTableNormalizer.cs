@@ -80,10 +80,21 @@ internal static class MarkdownTableNormalizer
 
     public sealed record Result(string Markdown, int DroppedTotalRows, int DroppedColumns, bool HasCollapsedPivotRows);
 
+    /// <summary>
+    /// Keeps only the rows of one sheet's table whose named column matches Value exactly (case-
+    /// insensitive, numeric-aware — "1" matches "1", "1.0" and "01"). Built for workbooks that mix
+    /// several periods' worth of rows into one tab (a "month" column carrying stray entries from
+    /// another month than the one the file is nominally for) — see the Kraus Sales BUILD sheet this
+    /// was added for. Deliberately narrow (equality on one column, one sheet) rather than a general
+    /// filter language, to keep the custom-instructions surface small and predictable.
+    /// </summary>
+    public sealed record RowFilter(string Column, string Value);
+
     public static Result Normalize(
         string markdown,
         string? moneyColumnPrefix = null,
-        IReadOnlyDictionary<string, string>? perSheetMoneyColumnPrefixes = null)
+        IReadOnlyDictionary<string, string>? perSheetMoneyColumnPrefixes = null,
+        IReadOnlyDictionary<string, RowFilter>? perSheetRowFilters = null)
     {
         var lines = markdown.Replace("\r\n", "\n").Split('\n');
         var output = new StringBuilder();
@@ -119,7 +130,13 @@ internal static class MarkdownTableNormalizer
                 ? pinned
                 : moneyColumnPrefix;
 
-            var (text, totals, cols, collapsed) = NormalizeBlock(block, effectivePrefix);
+            var rowFilter = currentSheet is not null
+                && perSheetRowFilters is not null
+                && perSheetRowFilters.TryGetValue(currentSheet, out var filter)
+                ? filter
+                : null;
+
+            var (text, totals, cols, collapsed) = NormalizeBlock(block, effectivePrefix, rowFilter);
             output.Append(text);
             droppedTotals += totals;
             droppedCols += cols;
@@ -130,7 +147,7 @@ internal static class MarkdownTableNormalizer
     }
 
     private static (string Text, int DroppedTotals, int DroppedColumns, bool CollapsedPivot) NormalizeBlock(
-        List<string> block, string? moneyColumnPrefix)
+        List<string> block, string? moneyColumnPrefix, RowFilter? rowFilter = null)
     {
         var grid = block
             .Where(l => !SeparatorRegex.IsMatch(l))
@@ -201,6 +218,17 @@ internal static class MarkdownTableNormalizer
 
         var header = body[headerIdx];
         var dataRows = body.Skip(headerIdx + 1).ToList();
+
+        if (rowFilter is not null)
+        {
+            var filterCol = Enumerable.Range(0, header.Count)
+                .FirstOrDefault(c => header[c].Equals(rowFilter.Column, StringComparison.OrdinalIgnoreCase), -1);
+
+            if (filterCol >= 0)
+            {
+                dataRows = dataRows.Where(r => RowFilterValueMatches(r[filterCol], rowFilter.Value)).ToList();
+            }
+        }
 
         // An operator can pin the exact netSales column by header prefix (e.g. when a report has
         // near-duplicate money columns — a "current month" figure next to a "current year range"
@@ -463,6 +491,22 @@ internal static class MarkdownTableNormalizer
 
     private static bool IsNumeric(string s) =>
         double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out _);
+
+    /// <summary>
+    /// Equality for a row-filter comparison: numeric-aware first (so "1", "1.0" and "01" all match
+    /// each other, since Excel and the operator's typed instruction rarely agree on formatting),
+    /// falling back to a plain case-insensitive string match for non-numeric columns.
+    /// </summary>
+    private static bool RowFilterValueMatches(string cell, string target)
+    {
+        if (double.TryParse(cell, NumberStyles.Any, CultureInfo.InvariantCulture, out var cellNum)
+            && double.TryParse(target, NumberStyles.Any, CultureInfo.InvariantCulture, out var targetNum))
+        {
+            return Math.Abs(cellNum - targetNum) < 0.0001;
+        }
+
+        return cell.Trim().Equals(target.Trim(), StringComparison.OrdinalIgnoreCase);
+    }
 
     private static string CleanCell(string value, bool isDateColumn)
     {

@@ -166,4 +166,35 @@ public static partial class CustomInstructionsParser
 
         return map.Count > 0 ? map : null;
     }
+
+    // "On sheet "BUILD" only include rows where "month" is "1"." — also accepts "equals"/"=" in
+    // place of "is". Built for workbooks that mix several periods' rows into one tab, where a
+    // column meant to scope the sheet to the report's own period (e.g. a numeric "month" column)
+    // carries a handful of stray entries from another period — see MarkdownTableNormalizer.RowFilter.
+    [GeneratedRegex(
+        """on\s+sheet\s+["“'](?<sheet>[^"”'\n]+)["”']\s+only\s+include\s+rows\s+where\s+["“'](?<col>[^"”'\n]+)["”']\s+(?:is|equals|=)\s+["“']?(?<val>[^"”'\n.]+?)["”']?\s*[.\n]""",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex RowFilterRegex();
+
+    /// <summary>
+    /// Returns a sheet-name → (column, value) row filter for every "On sheet "X" only include rows
+    /// where "COLUMN" is "VALUE"" clause in the instructions, or null if none are present.
+    /// </summary>
+    internal static Dictionary<string, MarkdownTableNormalizer.RowFilter>? TryExtractRowFilters(string? customInstructions)
+    {
+        if (string.IsNullOrWhiteSpace(customInstructions)) return null;
+
+        var map = new Dictionary<string, MarkdownTableNormalizer.RowFilter>(StringComparer.OrdinalIgnoreCase);
+        foreach (Match clause in RowFilterRegex().Matches(customInstructions))
+        {
+            var sheet = clause.Groups["sheet"].Value.Trim();
+            var col = clause.Groups["col"].Value.Trim();
+            var val = clause.Groups["val"].Value.Trim();
+            if (sheet.Length == 0 || col.Length == 0 || val.Length == 0) continue;
+
+            map[sheet] = new MarkdownTableNormalizer.RowFilter(col, val);
+        }
+
+        return map.Count > 0 ? map : null;
+    }
 }
