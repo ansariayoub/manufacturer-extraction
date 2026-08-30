@@ -97,8 +97,14 @@ internal static class MarkdownTableNormalizer
     /// keyword for IsTotalRow to key off. Those rows always leave a genuine per-item identifying
     /// column (here, "Item Code") blank, unlike every real line item, so filtering on that column
     /// being non-blank drops exactly the aggregate rows a text-based total detector cannot see.
+    ///
+    /// Values holds more than one entry for an "is X or Y or Z" clause — a Rheem Sales report
+    /// tracks three separate manufacturer "factories" (Commercial/Residential/Tankless) out of the
+    /// SAME uploaded file, each factory's total being the sum of several distinct "Product Line"
+    /// category values (e.g. Commercial Factory = "Commercial Tank" + "COMMERCIAL TE" +
+    /// "COMMERCIAL TG"), so a single-value equality filter can't express the split.
     /// </summary>
-    public sealed record RowFilter(string Column, string? Value);
+    public sealed record RowFilter(string Column, IReadOnlyList<string>? Values);
 
     public static Result Normalize(
         string markdown,
@@ -241,9 +247,9 @@ internal static class MarkdownTableNormalizer
 
             if (filterCol >= 0)
             {
-                dataRows = rowFilter.Value is null
+                dataRows = rowFilter.Values is null
                     ? dataRows.Where(r => r[filterCol].Trim().Length > 0).ToList()
-                    : dataRows.Where(r => RowFilterValueMatches(r[filterCol], rowFilter.Value)).ToList();
+                    : dataRows.Where(r => rowFilter.Values.Any(v => RowFilterValueMatches(r[filterCol], v))).ToList();
             }
         }
 

@@ -172,9 +172,12 @@ public static partial class CustomInstructionsParser
     // column meant to scope the sheet to the report's own period (e.g. a numeric "month" column)
     // carries a handful of stray entries from another period — see MarkdownTableNormalizer.RowFilter.
     // The negative lookahead keeps this from swallowing the "is not blank" form below as a literal
-    // value of "not blank".
+    // value of "not blank". The value span can itself list several quoted alternatives joined by
+    // "or" — "... is "Commercial Tank" or "COMMERCIAL TE" or "COMMERCIAL TG"." — for a report that
+    // groups several distinct column values into one logical category (see RowFilter.Values); the
+    // quoted names inside are pulled out separately from the outer match below.
     [GeneratedRegex(
-        """on\s+sheet\s+["“'](?<sheet>[^"”'\n]+)["”']\s+only\s+include\s+rows\s+where\s+["“'](?<col>[^"”'\n]+)["”']\s+(?:is(?!\s+not\b)|equals|=)\s+["“']?(?<val>[^"”'\n.]+?)["”']?\s*[.\n]""",
+        """on\s+sheet\s+["“'](?<sheet>[^"”'\n]+)["”']\s+only\s+include\s+rows\s+where\s+["“'](?<col>[^"”'\n]+)["”']\s+(?:is(?!\s+not\b)|equals|=)\s+(?<vals>["“'][^"”'\n.]+?["”'](?:\s*(?:,|or)\s*["“'][^"”'\n.]+?["”'])*)\s*[.\n]""",
         RegexOptions.IgnoreCase)]
     private static partial Regex RowFilterRegex();
 
@@ -204,17 +207,20 @@ public static partial class CustomInstructionsParser
             var col = clause.Groups["col"].Value.Trim();
             if (sheet.Length == 0 || col.Length == 0) continue;
 
-            map[sheet] = new MarkdownTableNormalizer.RowFilter(col, null);
+            map[sheet] = new MarkdownTableNormalizer.RowFilter(col, Values: null);
         }
 
         foreach (Match clause in RowFilterRegex().Matches(customInstructions))
         {
             var sheet = clause.Groups["sheet"].Value.Trim();
             var col = clause.Groups["col"].Value.Trim();
-            var val = clause.Groups["val"].Value.Trim();
-            if (sheet.Length == 0 || col.Length == 0 || val.Length == 0) continue;
+            var vals = QuotedNameRegex.Matches(clause.Groups["vals"].Value)
+                .Select(m => m.Groups["name"].Value.Trim())
+                .Where(v => v.Length > 0)
+                .ToList();
+            if (sheet.Length == 0 || col.Length == 0 || vals.Count == 0) continue;
 
-            map[sheet] = new MarkdownTableNormalizer.RowFilter(col, val);
+            map[sheet] = new MarkdownTableNormalizer.RowFilter(col, vals);
         }
 
         return map.Count > 0 ? map : null;

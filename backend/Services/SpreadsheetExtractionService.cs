@@ -137,6 +137,21 @@ public class SpreadsheetExtractionService : ISpreadsheetExtractionService
                 continue;
             }
 
+            // A sheet where every populated cell parses as a plain number, with no header row and no
+            // identifying text anywhere (no customer, product, or label column), is never real
+            // transaction data — a genuine sales table always carries at least one text column.
+            // Observed on a real Rheem Sales file: a leftover "Feuil1" tab holding two rows of bare
+            // numbers (e.g. "8195283 | 1906775"), which turned out to be an internal QA checksum
+            // pairing a row count with that month's already-known grand total — not sales rows at
+            // all. With no header for the deterministic pinned-column safety net to check it
+            // against, a model that read its numbers as "sales" inflated that document's total by
+            // millions.
+            if (rows.All(r => r.All(c => c.Length == 0 || double.TryParse(c, NumberStyles.Any, CultureInfo.InvariantCulture, out _))))
+            {
+                skippedSheets.Add(sheetName);
+                continue;
+            }
+
             TrimTrailingEmptyColumns(rows);
             totalRows += rows.Count;
 
