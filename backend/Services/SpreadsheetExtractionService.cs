@@ -124,6 +124,19 @@ public class SpreadsheetExtractionService : ISpreadsheetExtractionService
                 continue;
             }
 
+            // A sheet where every single row has at most one populated cell is a stray list of
+            // bare values (IDs, pasted numbers), never a transaction table — this app's sales data
+            // always needs multiple fields (customer, amount, ...) on the same row. Observed on a
+            // real IPS Sales file: a leftover "Feuil1" tab holding five bare numbers with no header
+            // at all, which still has nothing for the deterministic pinned-column safety net to
+            // check it against, so a model that read anything into it as "sales" went unguarded —
+            // inflating that document's total by tens of thousands of dollars.
+            if (rows.All(r => r.Count(c => c.Length > 0) <= 1))
+            {
+                skippedSheets.Add(sheetName);
+                continue;
+            }
+
             TrimTrailingEmptyColumns(rows);
             totalRows += rows.Count;
 

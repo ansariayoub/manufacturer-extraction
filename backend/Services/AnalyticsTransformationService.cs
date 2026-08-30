@@ -784,6 +784,7 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
         // forfeits the override — for THAT table. A whole-document check was observed to throw away
         // the override for every sheet in a 6-sheet workbook because one sheet lost a handful of
         // rows, even though the other five were extracted perfectly.
+        var moneyColumnPinApplied = false;
         if (!string.IsNullOrWhiteSpace(moneyColumnPrefix) || perSheetMoneyColumnPrefixes is not null)
         {
             var chunkCursor = 0;
@@ -798,6 +799,8 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
                 var tablePinnedValues = ExtractPinnedColumnValues(
                     new List<TableParts> { tables[t] }, moneyColumnPrefix, perSheetMoneyColumnPrefixes);
                 if (tablePinnedValues is null) continue;
+
+                moneyColumnPinApplied = true;
 
                 if (tablePinnedValues.Count == tableSales.Count)
                 {
@@ -848,7 +851,8 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
             new AnalyticsReport { Sales = allSales },
             warnings.OrderBy(w => w).ToList(),
             rowsSent,
-            rowsReturned);
+            rowsReturned,
+            moneyColumnPinApplied);
     }
 
     /// <summary>

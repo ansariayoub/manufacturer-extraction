@@ -11,7 +11,14 @@ public record TransformationResult(
     AnalyticsReport Report,
     IReadOnlyList<string> Warnings,
     int RowsSent,
-    int RowsReturned);
+    int RowsReturned,
+    // True when a pinned money column (from custom instructions) was successfully matched against
+    // at least one table's source rows and used to set or rescale its NetSales values. The
+    // document's total is then verified against the source file directly, independent of whatever
+    // row count the model happened to return — so the row-count-based coverage warning in
+    // DocumentProcessingService, which otherwise reads as "data may be missing", would be a false
+    // alarm here and is softened accordingly.
+    bool MoneyColumnPinApplied = false);
 
 public interface IAnalyticsTransformationService
 {

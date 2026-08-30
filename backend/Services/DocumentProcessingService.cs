@@ -154,12 +154,19 @@ public class DocumentProcessingService : IDocumentProcessingService
                       "The file may be in a format the extractor cannot read — open the 'Extracted' view to check."
                     : $"Nothing was extracted although ~{detectedRows} source rows were detected. The mapping step returned no lines.");
             }
-            else if (detectedRows > 0 && result.Report.Sales.Count < detectedRows * 0.85)
+            else if (detectedRows > 0 && result.Report.Sales.Count < detectedRows * 0.85 && !result.MoneyColumnPinApplied)
             {
                 // A custom instruction commonly filters rows on purpose (e.g. "only extract rows
                 // where the comment column reads exactly ..."), which trips this check even though
                 // nothing was lost. Say so rather than reading as an unconditional data-loss alarm —
                 // the raw numbers are still there for the operator to judge either way.
+                //
+                // Skipped entirely when a pinned money column was applied: that mechanism reads the
+                // total straight from the source file and rescales to match it exactly (see
+                // AnalyticsTransformationService), so the dollar figure is already verified correct
+                // regardless of how many individual line items the model returned — a row-count
+                // mismatch there is expected on reports with embedded subtotal blocks (GL-code
+                // rollups, etc.) that never become canonical sales lines, not a sign of lost data.
                 var maybeIntentional = !string.IsNullOrWhiteSpace(document.CustomInstructions)
                     ? " This may be expected if your processing instructions intentionally filter rows — check them before assuming data loss."
                     : "";
