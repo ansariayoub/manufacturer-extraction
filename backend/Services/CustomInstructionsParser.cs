@@ -171,20 +171,42 @@ public static partial class CustomInstructionsParser
     // place of "is". Built for workbooks that mix several periods' rows into one tab, where a
     // column meant to scope the sheet to the report's own period (e.g. a numeric "month" column)
     // carries a handful of stray entries from another period — see MarkdownTableNormalizer.RowFilter.
+    // The negative lookahead keeps this from swallowing the "is not blank" form below as a literal
+    // value of "not blank".
     [GeneratedRegex(
-        """on\s+sheet\s+["“'](?<sheet>[^"”'\n]+)["”']\s+only\s+include\s+rows\s+where\s+["“'](?<col>[^"”'\n]+)["”']\s+(?:is|equals|=)\s+["“']?(?<val>[^"”'\n.]+?)["”']?\s*[.\n]""",
+        """on\s+sheet\s+["“'](?<sheet>[^"”'\n]+)["”']\s+only\s+include\s+rows\s+where\s+["“'](?<col>[^"”'\n]+)["”']\s+(?:is(?!\s+not\b)|equals|=)\s+["“']?(?<val>[^"”'\n.]+?)["”']?\s*[.\n]""",
         RegexOptions.IgnoreCase)]
     private static partial Regex RowFilterRegex();
 
+    // "On sheet "Sheet1" only include rows where "Item Code" is not blank." — for reports whose
+    // aggregate/subtotal rows carry no text label at all (every identifying column blank, only the
+    // numeric ones populated), so there is no keyword for a total-row detector to key off — see
+    // MarkdownTableNormalizer.RowFilter.
+    [GeneratedRegex(
+        """on\s+sheet\s+["“'](?<sheet>[^"”'\n]+)["”']\s+only\s+include\s+rows\s+where\s+["“'](?<col>[^"”'\n]+)["”']\s+is\s+not\s+(?:blank|empty)""",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex RowFilterNotBlankRegex();
+
     /// <summary>
     /// Returns a sheet-name → (column, value) row filter for every "On sheet "X" only include rows
-    /// where "COLUMN" is "VALUE"" clause in the instructions, or null if none are present.
+    /// where "COLUMN" is "VALUE"" (or "... is not blank") clause in the instructions, or null if
+    /// none are present.
     /// </summary>
     internal static Dictionary<string, MarkdownTableNormalizer.RowFilter>? TryExtractRowFilters(string? customInstructions)
     {
         if (string.IsNullOrWhiteSpace(customInstructions)) return null;
 
         var map = new Dictionary<string, MarkdownTableNormalizer.RowFilter>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (Match clause in RowFilterNotBlankRegex().Matches(customInstructions))
+        {
+            var sheet = clause.Groups["sheet"].Value.Trim();
+            var col = clause.Groups["col"].Value.Trim();
+            if (sheet.Length == 0 || col.Length == 0) continue;
+
+            map[sheet] = new MarkdownTableNormalizer.RowFilter(col, null);
+        }
+
         foreach (Match clause in RowFilterRegex().Matches(customInstructions))
         {
             var sheet = clause.Groups["sheet"].Value.Trim();

@@ -282,6 +282,40 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
         return values;
     }
 
+    // Matches a cell reading like "Total Territory Sales:", "Grand Total:", "Total Sales:" — a
+    // report's own stated aggregate, printed as a plain label rather than sitting in a regular data
+    // column. Built for a real Kutol Sales territory commission report whose per-customer and
+    // grand-total rows carry NO text label at all in their normal columns (blank Item Code, blank
+    // Item — nothing for IsTotalRow or column position to key off), but which separately prints
+    // "Total Territory Sales: 146350.98" as its own line near the end. Column alignment is
+    // unreliable on that report (rows vary in cell count row to row), so this deliberately searches
+    // raw markdown text rather than a fixed column index.
+    private static readonly Regex LabeledGrandTotalRegex = new(
+        @"\btotal\s+\w+\s+sales\s*:", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // Searched against the ORIGINAL, un-normalized markdown — not a table's DataRows — because this
+    // label's own row also matches TotalRowRegex (it starts with "Total") and is dropped as an
+    // aggregate row well before DataRows is populated, same as any other total row. That drop is
+    // correct for the row's role as a subtotal in the detail table; it just also happens to be the
+    // one place this document states its real answer in plain text.
+    private static double? FindLabeledGrandTotal(string rawMarkdown)
+    {
+        foreach (var row in rawMarkdown.Split('\n'))
+        {
+            var match = LabeledGrandTotalRegex.Match(row);
+            if (!match.Success) continue;
+
+            var numberMatch = Regex.Match(row[(match.Index + match.Length)..], @"-?[\d,]*\d\.?\d*");
+            if (numberMatch.Success
+                && double.TryParse(numberMatch.Value.Replace(",", ""), NumberStyles.Any, CultureInfo.InvariantCulture, out var value))
+            {
+                return value;
+            }
+        }
+
+        return null;
+    }
+
     private static List<string> SplitMarkdownRow(string line)
     {
         var trimmed = line.Trim();
@@ -786,7 +820,6 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
         // the override for every sheet in a 6-sheet workbook because one sheet lost a handful of
         // rows, even though the other five were extracted perfectly.
         var moneyColumnPinApplied = false;
-        if (!string.IsNullOrWhiteSpace(moneyColumnPrefix) || perSheetMoneyColumnPrefixes is not null)
         {
             var chunkCursor = 0;
             for (int t = 0; t < tables.Count; t++)
@@ -797,36 +830,45 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
                     .ToList();
                 chunkCursor += chunkCount;
 
-                var tablePinnedValues = ExtractPinnedColumnValues(
-                    new List<TableParts> { tables[t] }, moneyColumnPrefix, perSheetMoneyColumnPrefixes);
-                if (tablePinnedValues is null) continue;
-
-                moneyColumnPinApplied = true;
-
-                if (tablePinnedValues.Count == tableSales.Count)
+                List<double?>? tablePinnedValues = null;
+                if (!string.IsNullOrWhiteSpace(moneyColumnPrefix) || perSheetMoneyColumnPrefixes is not null)
                 {
-                    for (int i = 0; i < tableSales.Count; i++)
-                        tableSales[i].NetSales = tablePinnedValues[i];
-                    continue;
+                    tablePinnedValues = ExtractPinnedColumnValues(
+                        new List<TableParts> { tables[t] }, moneyColumnPrefix, perSheetMoneyColumnPrefixes);
                 }
 
-                // Row counts don't line up (the model added or dropped a row somewhere across this
-                // table's chunks), so per-row alignment above isn't safe — but the pinned column's
-                // SUM across the whole table needs no alignment at all, and it is exactly right
-                // regardless of row count. Rescale every row so the table's total matches that sum
-                // precisely, instead of leaving whatever the model produced unguarded. This is what
-                // catches the failure mode a per-row-only check cannot: once a large document loses
-                // the thread across dozens of chunks, the model's own total can land anywhere —
-                // observed reaching the billions on a real multi-hundred-row document — and nothing
-                // upstream of this point would otherwise notice.
+                if (tablePinnedValues is not null)
+                {
+                    moneyColumnPinApplied = true;
+
+                    if (tablePinnedValues.Count == tableSales.Count)
+                    {
+                        for (int i = 0; i < tableSales.Count; i++)
+                            tableSales[i].NetSales = tablePinnedValues[i];
+                        continue;
+                    }
+                }
+
                 if (tableSales.Count == 0) continue;
 
-                var detTotal = tablePinnedValues.Where(v => v.HasValue).Sum(v => v!.Value);
+                // No pinned column, or its row count didn't line up with the model's (the model
+                // added or dropped a row somewhere across this table's chunks, so per-row alignment
+                // isn't safe) — but some reports print their OWN grand total in plain text, e.g. a
+                // Kutol Sales territory commission report ending in a line reading literally "Total
+                // Territory Sales: 146350.98". That needs no column alignment at all: find it, and
+                // it is exactly right regardless of anything the model did. Falls back to the pinned
+                // column's own sum (still alignment-free) when no such label exists.
+                double? detTotal = FindLabeledGrandTotal(rawMarkdown)
+                    ?? (tablePinnedValues is not null
+                        ? tablePinnedValues.Where(v => v.HasValue).Sum(v => v!.Value)
+                        : null);
+                if (detTotal is null) continue;
+
                 var llmTotal = tableSales.Sum(s => s.NetSales ?? 0);
 
                 if (Math.Abs(llmTotal) > 0.01)
                 {
-                    var scale = detTotal / llmTotal;
+                    var scale = detTotal.Value / llmTotal;
                     foreach (var sale in tableSales)
                         if (sale.NetSales.HasValue) sale.NetSales = Math.Round(sale.NetSales.Value * scale, 2);
                 }
@@ -834,14 +876,15 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
                 {
                     // Nothing to scale (the model reported ~$0 across the board) — spread the real
                     // total evenly rather than silently leave it at zero.
-                    var each = Math.Round(detTotal / tableSales.Count, 2);
+                    var each = Math.Round(detTotal.Value / tableSales.Count, 2);
                     foreach (var sale in tableSales) sale.NetSales = each;
                 }
 
+                moneyColumnPinApplied = true;
                 warnings.Add(
                     $"{tables[t].Preamble.Trim().Split('\n').FirstOrDefault() ?? "A table"}: row count from the " +
-                    $"model ({tableSales.Count}) didn't match the source ({tablePinnedValues.Count}), so per-row " +
-                    "figures were rescaled to match the pinned column's true total rather than left as reported.");
+                    $"model ({tableSales.Count}) didn't match a reliable deterministic source, so per-row figures " +
+                    "were rescaled to match that source's true total rather than left as reported.");
             }
         }
 

@@ -87,8 +87,15 @@ internal static class MarkdownTableNormalizer
     /// another month than the one the file is nominally for) — see the Kraus Sales BUILD sheet this
     /// was added for. Deliberately narrow (equality on one column, one sheet) rather than a general
     /// filter language, to keep the custom-instructions surface small and predictable.
+    ///
+    /// Value is null for the "is not blank" form instead: some reports (a Kutol Sales territory
+    /// commission report) carry per-customer and grand-total subtotal rows with NO text label at
+    /// all — every identifying column blank, only the numeric ones populated — so there is no
+    /// keyword for IsTotalRow to key off. Those rows always leave a genuine per-item identifying
+    /// column (here, "Item Code") blank, unlike every real line item, so filtering on that column
+    /// being non-blank drops exactly the aggregate rows a text-based total detector cannot see.
     /// </summary>
-    public sealed record RowFilter(string Column, string Value);
+    public sealed record RowFilter(string Column, string? Value);
 
     public static Result Normalize(
         string markdown,
@@ -231,7 +238,9 @@ internal static class MarkdownTableNormalizer
 
             if (filterCol >= 0)
             {
-                dataRows = dataRows.Where(r => RowFilterValueMatches(r[filterCol], rowFilter.Value)).ToList();
+                dataRows = rowFilter.Value is null
+                    ? dataRows.Where(r => r[filterCol].Trim().Length > 0).ToList()
+                    : dataRows.Where(r => RowFilterValueMatches(r[filterCol], rowFilter.Value)).ToList();
             }
         }
 
