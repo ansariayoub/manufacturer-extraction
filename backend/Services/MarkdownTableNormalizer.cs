@@ -203,7 +203,12 @@ internal static class MarkdownTableNormalizer
             return (bannerOnly.ToString(), 0, 0, false);
         }
 
-        var keep = SelectColumns(body, width);
+        // Found on the header's original (pre-selection) column layout, purely to let SelectColumns
+        // tell a genuine merged-cell duplicate from two columns that only coincidentally hold equal
+        // values — see the comment there.
+        var headerRowForDedup = body[FindHeaderRow(body)];
+
+        var keep = SelectColumns(body, width, headerRowForDedup);
         var droppedColumns = width - keep.Count;
         body = body.Select(r => keep.Select(c => r[c]).ToList()).ToList();
 
@@ -343,7 +348,7 @@ internal static class MarkdownTableNormalizer
     /// repeats, and they are pure noise — each one is another near-identical column the model has
     /// to disambiguate on every row.
     /// </summary>
-    private static List<int> SelectColumns(List<List<string>> grid, int width)
+    private static List<int> SelectColumns(List<List<string>> grid, int width, List<string>? headerRow = null)
     {
         var keep = new List<int>();
 
@@ -355,16 +360,32 @@ internal static class MarkdownTableNormalizer
             if (keep.Count > 0)
             {
                 var prev = keep[^1];
-                var compared = 0;
-                var identical = 0;
-                foreach (var row in grid)
-                {
-                    if (row[prev].Length == 0 && row[c].Length == 0) continue;
-                    compared++;
-                    if (row[prev] == row[c]) identical++;
-                }
 
-                if (compared > 0 && identical >= compared * 0.9) continue; // duplicate of previous
+                // A genuinely different field can still coincide with its neighbour on value for
+                // most rows — e.g. a "PO_VALUE" (= unit price x quantity) column reads identical to
+                // "NET_COST" (unit price) on every row where quantity happens to be 1, which can be
+                // the overwhelming majority of rows on some real Kraus Sales exports. That is not a
+                // merged cell repeating itself; it is two distinct fields agreeing by arithmetic
+                // coincidence. Only fold two columns together when their OWN header text doesn't
+                // already say they're different things — a real merged-cell continuation always
+                // shares (or blanks out) its header, unlike this case.
+                var headersDiffer = headerRow is not null
+                    && headerRow[prev].Length > 0 && headerRow[c].Length > 0
+                    && !headerRow[prev].Equals(headerRow[c], StringComparison.OrdinalIgnoreCase);
+
+                if (!headersDiffer)
+                {
+                    var compared = 0;
+                    var identical = 0;
+                    foreach (var row in grid)
+                    {
+                        if (row[prev].Length == 0 && row[c].Length == 0) continue;
+                        compared++;
+                        if (row[prev] == row[c]) identical++;
+                    }
+
+                    if (compared > 0 && identical >= compared * 0.9) continue; // duplicate of previous
+                }
             }
 
             keep.Add(c);
