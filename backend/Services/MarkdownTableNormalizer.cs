@@ -306,7 +306,8 @@ internal static class MarkdownTableNormalizer
         // "Grand Total" / "Total général" row, trust that single figure — it is the workbook's own
         // correct aggregate — instead of the detail rows above it.
         var grandTotalIdx = FindGrandTotalRow(dataRows);
-        var isHierarchicalPivot = grandTotalIdx >= 0 && LooksLikeHierarchicalPivot(dataRows, grandTotalIdx);
+        var isHierarchicalPivot = grandTotalIdx >= 0 &&
+            (LooksLikeHierarchicalPivot(dataRows, grandTotalIdx) || HasRepeatedMoneyColumnHeaders(header, dataRows));
 
         int droppedTotals;
         if (isHierarchicalPivot)
@@ -546,6 +547,35 @@ internal static class MarkdownTableNormalizer
 
     private static bool IsNumeric(string s) =>
         double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out _);
+
+    /// <summary>
+    /// True when the SAME money-like header text (e.g. "Net Sales") appears 2+ times across mostly-
+    /// numeric columns — the signature of an Excel PivotTable laid out with one column-group per
+    /// period side by side (Jan/Feb/Mar.../Net Sales, Commission repeated per month) rather than one
+    /// row per transaction. A real Eemax export in this shape has no single column that already sums
+    /// every period, so pinning one named column (the ordinary fix for an ambiguous-but-singular
+    /// money column) can't recover the right total, and summing every leaf row double-counts because
+    /// these reports also nest customer > sub-account subtotal rows with no reliable "Total" label at
+    /// that level. The one number the workbook itself vouches for is its own trailing "Grand
+    /// Total"/"Total général" row, spanning all the period columns at once — so this is treated the
+    /// same as <see cref="LooksLikeHierarchicalPivot"/>: collapse the whole table down to that single
+    /// row instead of trusting either the model's row-by-row read or a naive column sum.
+    /// </summary>
+    private static bool HasRepeatedMoneyColumnHeaders(List<string> header, List<List<string>> dataRows)
+    {
+        if (dataRows.Count < 5) return false;
+
+        var numericCols = Enumerable.Range(0, header.Count)
+            .Where(c => dataRows.Count(r => c < r.Count && IsNumeric(r[c])) >= dataRows.Count * 0.3)
+            .ToHashSet();
+        if (numericCols.Count == 0) return false;
+
+        return header
+            .Select((h, c) => (h, c))
+            .Where(x => x.h.Length > 0 && numericCols.Contains(x.c))
+            .GroupBy(x => x.h, StringComparer.OrdinalIgnoreCase)
+            .Any(g => g.Count() >= 2);
+    }
 
     /// <summary>
     /// Equality for a row-filter comparison: numeric-aware first (so "1", "1.0" and "01" all match
