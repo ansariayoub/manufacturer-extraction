@@ -860,6 +860,35 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
                             tableSales[i].NetSales = tablePinnedValues[i];
                         continue;
                     }
+
+                    if (tableSales.Count == 0)
+                    {
+                        // The model returned NOTHING for this table at all — observed when its only
+                        // surviving row is a synthetic "ALL CUSTOMERS COMBINED" aggregate line (the
+                        // hierarchical-pivot collapse's relabeled Grand Total row): despite the
+                        // relabel, the model's own aggregate-row-skipping instinct still treats it as
+                        // a total to omit rather than a transaction, because it reads that way
+                        // semantically regardless of the literal text. The pinned value is still a
+                        // completely reliable source for the dollar figure even with zero model-
+                        // returned line items to attach it to — write it straight in as its own line
+                        // rather than let the "no rows to override" guard below silently drop the
+                        // table's ENTIRE contribution. This previously undercounted a real Eemax
+                        // archive file by its full $522,933.67 January total.
+                        var sheetLabel = tables[t].Preamble.Trim().Split('\n').FirstOrDefault() ?? "Unlabeled table";
+                        var synthesized = 0;
+                        foreach (var value in tablePinnedValues.Where(v => v.HasValue))
+                        {
+                            allSales.Add(new AnalyticsTransaction { CustomerName = sheetLabel, NetSales = value });
+                            synthesized++;
+                        }
+                        if (synthesized > 0)
+                        {
+                            warnings.Add(
+                                $"{sheetLabel}: the model returned no line items for this table, so its " +
+                                "pinned total was recorded directly as a single line instead of being lost.");
+                        }
+                        continue;
+                    }
                 }
 
                 if (tableSales.Count == 0) continue;
