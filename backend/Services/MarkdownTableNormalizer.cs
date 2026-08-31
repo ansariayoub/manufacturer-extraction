@@ -632,9 +632,68 @@ internal static class MarkdownTableNormalizer
         // FindHeaderRow lands on, so `header` here is sometimes the "Net Sales/Commission" sub-type
         // row instead of the "Jan/Feb/Mar" period row — every group in that shape is 1 column wide
         // (the labels alternate, none repeat consecutively), which would silently mint one fake
-        // "period" per money/commission column instead of one per real period. Bail out to the
-        // single-row collapse instead of guessing wrong in that case.
-        if (periodGroups.Count == 0 || periodGroups.All(g => g.Len < 2)) return (null, null);
+        // "period" per money/commission column instead of one per real period.
+        if (periodGroups.Count == 0 || periodGroups.All(g => g.Len < 2))
+        {
+            // The true period row (the one with "Jan"/"Feb"/"Mar"...) was flattened into unstructured
+            // preamble text by the time this code runs, so its column boundaries can't be recovered
+            // from text. But the Grand Total row itself still carries the shape: label-only prefix
+            // columns (Customer Name, Branch, Postal Code) are always blank on that row, while every
+            // real period's money/commission columns are populated — so grouping by "does the Grand
+            // Total row have a value here" recovers the same column runs without needing the label.
+            var numericGroups = new List<(int Start, int Len)>();
+            for (int c = 0; c < grandRow.Count;)
+            {
+                if (c >= header.Count || !IsNumeric(grandRow[c])) { c++; continue; }
+                var start = c;
+                while (c < grandRow.Count && IsNumeric(grandRow[c])) c++;
+                numericGroups.Add((start, c - start));
+            }
+
+            // A pivot with no blank separator between periods (every money/commission column packed
+            // back to back, as opposed to a blank gap between periods) collapses to ONE numeric run
+            // rather than several — but the sub-column labels underneath ("Net Sales", "Commissions",
+            // "Net Sales", "Commissions", ...) still cycle once per period. Find that cycle length
+            // (how many columns until the first label repeats) and slice the single run into
+            // equal-width periods by it, so this reduces to the same shape as the multi-run case.
+            if (numericGroups.Count == 1)
+            {
+                var (runStart, runLen) = numericGroups[0];
+                var firstLabel = runStart < header.Count ? header[runStart] : "";
+                var cycleLen = Enumerable.Range(1, runLen - 1)
+                    .FirstOrDefault(k => runStart + k < header.Count && header[runStart + k] == firstLabel, 0);
+
+                if (cycleLen > 0 && runLen % cycleLen == 0 && runLen / cycleLen >= 2)
+                {
+                    numericGroups = Enumerable.Range(0, runLen / cycleLen)
+                        .Select(i => (Start: runStart + i * cycleLen, Len: cycleLen))
+                        .ToList();
+                }
+            }
+
+            // Only trust this when every run is the same width and there is more than one — a
+            // single accidental run (an ordinary total row with no periods at all) must not be
+            // reinterpreted as "one period".
+            if (numericGroups.Count >= 2 && numericGroups.Select(g => g.Len).Distinct().Count() == 1)
+            {
+                var groupWidth = numericGroups[0].Len;
+                var rows = numericGroups
+                    .Select((g, i) => new List<string> { $"Period {i + 1}" }
+                        .Concat(Enumerable.Range(g.Start, g.Len).Select(c => grandRow[c]))
+                        .ToList())
+                    .ToList();
+                var names = Enumerable.Range(0, groupWidth)
+                    .Select(k =>
+                    {
+                        var col = numericGroups[0].Start + k;
+                        return col < header.Count && header[col].Length > 0 ? header[col] : $"Value{k + 1}";
+                    })
+                    .ToList();
+                return (new List<string> { "Period" }.Concat(names).ToList(), rows);
+            }
+
+            return (null, null);
+        }
 
         var subHeaderRow = dataRows.FirstOrDefault(r =>
             r != grandRow &&
