@@ -306,11 +306,30 @@ internal static class MarkdownTableNormalizer
         // "Grand Total" / "Total général" row, trust that single figure — it is the workbook's own
         // correct aggregate — instead of the detail rows above it.
         var grandTotalIdx = FindGrandTotalRow(dataRows);
+        var repeatedHeaderPivot = grandTotalIdx >= 0 && HasRepeatedMoneyColumnHeaders(header, dataRows);
         var isHierarchicalPivot = grandTotalIdx >= 0 &&
-            (LooksLikeHierarchicalPivot(dataRows, grandTotalIdx) || HasRepeatedMoneyColumnHeaders(header, dataRows));
+            (repeatedHeaderPivot || LooksLikeHierarchicalPivot(dataRows, grandTotalIdx));
 
         int droppedTotals;
-        if (isHierarchicalPivot)
+        var (splitHeader, splitRows) = repeatedHeaderPivot
+            ? SplitPeriodGroupsIntoRows(header, dataRows, grandTotalIdx)
+            : (null, null);
+
+        if (splitHeader is not null && splitRows is not null)
+        {
+            // Unlike the plain duplicate-row case below, collapsing to ONE row here would leave a
+            // single row carrying several periods' worth of money columns side by side (Jan Net
+            // Sales, Jan Commission, Feb Net Sales, Feb Commission, ...) — a shape the model reads as
+            // ONE transaction, not several, so it picks a single column (observed: whichever period
+            // comes last) and silently discards the rest. Splitting the Grand Total row into one
+            // row PER period instead gives the model back the "one row = one transaction" shape it
+            // already handles correctly everywhere else, at the cost of losing the per-customer
+            // detail this collapse already gave up.
+            droppedTotals = dataRows.Count - splitRows.Count;
+            header = splitHeader;
+            dataRows = splitRows;
+        }
+        else if (isHierarchicalPivot)
         {
             droppedTotals = dataRows.Count - 1;
 
@@ -575,6 +594,71 @@ internal static class MarkdownTableNormalizer
             .Where(x => x.h.Length > 0 && numericCols.Contains(x.c))
             .GroupBy(x => x.h, StringComparer.OrdinalIgnoreCase)
             .Any(g => g.Count() >= 2);
+    }
+
+    /// <summary>
+    /// Turns a single Grand Total row spanning several repeated period column-groups (see
+    /// <see cref="HasRepeatedMoneyColumnHeaders"/>) into one row PER period, each carrying just that
+    /// period's own sub-columns — e.g. "Jan | Jan | Feb | Feb" over "Net Sales | Commission | Net
+    /// Sales | Commission" becomes two rows, "Jan | &lt;netSales&gt; | &lt;commission&gt;" and "Feb |
+    /// &lt;netSales&gt; | &lt;commission&gt;". Columns whose top header starts with "Total" are
+    /// dropped rather than turned into their own period, since they already sum every other period
+    /// and summing the split rows would double the total. The sub-column names (Net Sales,
+    /// Commission, ...) come from whichever OTHER row in the table reads as a header itself — Excel's
+    /// pivot export puts that row immediately under the period-group header, ahead of any real data —
+    /// falling back to generic names if none is found.
+    /// </summary>
+    private static (List<string>? Header, List<List<string>>? Rows) SplitPeriodGroupsIntoRows(
+        List<string> header, List<List<string>> dataRows, int grandTotalIdx)
+    {
+        var grandRow = dataRows[grandTotalIdx];
+
+        var groups = new List<(int Start, int Len, string Label)>();
+        for (int c = 0; c < header.Count;)
+        {
+            var label = header[c];
+            var start = c;
+            while (c < header.Count && header[c] == label) c++;
+            groups.Add((start, c - start, label));
+        }
+
+        var periodGroups = groups
+            .Where(g => g.Label.Length > 0 && !g.Label.StartsWith("Total", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        // A real period grouping is 2+ columns wide (a money column and at least a commission
+        // column repeated per period, as in every case this was built for). Some pivot exports have
+        // an extra row-label prefix (Customer Name/Branch/Postal Code) that shifts which row
+        // FindHeaderRow lands on, so `header` here is sometimes the "Net Sales/Commission" sub-type
+        // row instead of the "Jan/Feb/Mar" period row — every group in that shape is 1 column wide
+        // (the labels alternate, none repeat consecutively), which would silently mint one fake
+        // "period" per money/commission column instead of one per real period. Bail out to the
+        // single-row collapse instead of guessing wrong in that case.
+        if (periodGroups.Count == 0 || periodGroups.All(g => g.Len < 2)) return (null, null);
+
+        var subHeaderRow = dataRows.FirstOrDefault(r =>
+            r != grandRow &&
+            r.Count(c => c.Length > 0) > 0 &&
+            r.Count(c => c.Length > 0 && !IsNumeric(c)) >= r.Count(c => c.Length > 0) * 0.5);
+
+        var width = periodGroups[0].Len;
+        var subHeaderNames = Enumerable.Range(0, width)
+            .Select(k =>
+            {
+                var col = periodGroups[0].Start + k;
+                var name = subHeaderRow is not null && col < subHeaderRow.Count ? subHeaderRow[col] : "";
+                return name.Length > 0 ? name : $"Value{k + 1}";
+            })
+            .ToList();
+
+        var newHeader = new List<string> { "Period" }.Concat(subHeaderNames).ToList();
+        var newRows = periodGroups
+            .Select(g => new List<string> { g.Label }
+                .Concat(Enumerable.Range(g.Start, g.Len).Select(c => c < grandRow.Count ? grandRow[c] : ""))
+                .ToList())
+            .ToList();
+
+        return (newHeader, newRows);
     }
 
     /// <summary>
