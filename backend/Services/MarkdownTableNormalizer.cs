@@ -42,8 +42,13 @@ internal static class MarkdownTableNormalizer
     // "range"/"prior" above — a text instruction alone was not enough to keep the model on the one
     // column asked for once the document spans enough chunks; the wrong columns must be physically
     // removed before the model ever sees them.
+    // "ytd" catches a cumulative "YTD 2026"/"YTD 2025" column sitting right next to the report's
+    // actual current-period figure (a plain "2026" header) — a real Uponor Sales export, where
+    // summing the YTD column instead of the current-period one inflated later months by 2-4x
+    // (Feb's true $2,956,333 vs a hallucinated ~$4.9M) since YTD only equals the period total in
+    // the first month of the year, then keeps growing.
     private static readonly Regex AmbiguousMoneyColumnRegex = new(
-        @"\brange\b|\bprior\b|^py\b|^(act\s+)?m\d{2}\b|^act\s+\d{2}\.\.\d{2}",
+        @"\brange\b|\bprior\b|\bytd\b|^py\b|^(act\s+)?m\d{2}\b|^act\s+\d{2}\.\.\d{2}",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static readonly Regex TotalRowRegex = new(
@@ -195,7 +200,18 @@ internal static class MarkdownTableNormalizer
             var isFieldNamePreambleLine =
                 body.Count == 0 && nonEmpty.Count == 1 && !IsNumeric(nonEmpty[0]);
 
-            if (IsBannerRow(nonEmpty) || isFieldNamePreambleLine)
+            // Bounded to body.Count == 0 — before the real header/data has been found — because
+            // this heuristic (few distinct values, one repeated 3+ times) also matches perfectly
+            // legitimate DATA rows once real rows are flowing: a branch with all-zero sales, or one
+            // where several columns coincidentally hold the same figure (e.g. "current period" and
+            // "$ change" being equal because the prior year was zero). Without this bound, a real
+            // Uponor Sales export lost two entire branches this way — one all-zero, one a large
+            // negative ("-16289" repeated across four columns) — silently, with no warning and no
+            // effect on the reported total (their own sales figure was correct; only the roll-up-
+            // by-branch row disappeared), which is exactly the kind of loss a document's row count
+            // should have surfaced but the "Incomplete extraction" heuristic conveniently didn't
+            // catch here since these are unrelated to netSales pinning.
+            if ((body.Count == 0 && IsBannerRow(nonEmpty)) || isFieldNamePreambleLine)
             {
                 if (body.Count == 0 && !isFieldNamePreambleLine)
                 {
