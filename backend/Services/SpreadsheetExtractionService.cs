@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using ExcelDataReader;
 using ManufacturerExtraction.Api.Services.Interfaces;
 
@@ -150,6 +151,28 @@ public class SpreadsheetExtractionService : ISpreadsheetExtractionService
             {
                 skippedSheets.Add(sheetName);
                 continue;
+            }
+
+            // A sheet whose NAME reads as reference material ("Territory Lookup", "Notes", ...) and
+            // that carries no money-shaped column anywhere in its first few rows is a lookup/glossary
+            // table, not sales data — observed on a real Raypak file ("Territory Lookup": City,
+            // Territory, State, County, nothing resembling an amount). Requiring BOTH the suspicious
+            // name AND the absence of anything money-shaped keeps this from skipping a sheet that
+            // merely happens to be named unusually but still holds real transactions — a sheet named
+            // "Notes" that also has an "Amount" column is left alone.
+            var sheetNameSuggestsReference = Regex.IsMatch(sheetName,
+                @"\b(notes?|read\s*me|instructions?|lookup|glossary|legend|definitions?)\b",
+                RegexOptions.IgnoreCase);
+            if (sheetNameSuggestsReference)
+            {
+                var hasMoneyLikeHeader = rows.Take(5).SelectMany(r => r).Any(c => Regex.IsMatch(c,
+                    @"\b(sales|amount|amt|total|price|cost|commission|revenue|value|invoice|paid)\b",
+                    RegexOptions.IgnoreCase));
+                if (!hasMoneyLikeHeader)
+                {
+                    skippedSheets.Add(sheetName);
+                    continue;
+                }
             }
 
             TrimTrailingEmptyColumns(rows);
