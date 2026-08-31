@@ -47,6 +47,12 @@ internal static class MarkdownTableNormalizer
     // summing the YTD column instead of the current-period one inflated later months by 2-4x
     // (Feb's true $2,956,333 vs a hallucinated ~$4.9M) since YTD only equals the period total in
     // the first month of the year, then keeps growing.
+    // Headers that mark a numeric-looking column as an IDENTIFIER, not a money/quantity figure —
+    // see LooksLikeHierarchicalPivot, which excludes these before checking for row duplication.
+    private static readonly Regex IdentifierColumnRegex = new(
+        @"\b(zip|postal|phone|fax|account\s*(no|number|#)|category|category\s*code|item\s*(no|number|code|#)|product\s*(no|number|code|#)|customer\s*(no|number|code|#)|store\s*(no|number|#))\b",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     private static readonly Regex AmbiguousMoneyColumnRegex = new(
         @"\brange\b|\bprior\b|\bytd\b|^py\b|^(act\s+)?m\d{2}\b|^act\s+\d{2}\.\.\d{2}",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -312,7 +318,7 @@ internal static class MarkdownTableNormalizer
         // "Grand Total" / "Total général" row, trust that single figure — it is the workbook's own
         // correct aggregate — instead of the detail rows above it.
         var grandTotalIdx = FindGrandTotalRow(dataRows);
-        var duplicateRowPivot = grandTotalIdx >= 0 && LooksLikeHierarchicalPivot(dataRows, grandTotalIdx);
+        var duplicateRowPivot = grandTotalIdx >= 0 && LooksLikeHierarchicalPivot(dataRows, grandTotalIdx, header);
         // A table can independently look like a "duplicate rows" pivot (Customer > Sub-account >
         // Order > Invoice, no reliable per-row way to tell a rollup from the one real leaf beneath
         // it — see LooksLikeHierarchicalPivot) AND ALSO have repeated period columns. When both fire
@@ -698,8 +704,18 @@ internal static class MarkdownTableNormalizer
     /// a parent row's total is repeated verbatim by each of its descendants down to the leaf. Real
     /// transaction rows essentially never coincide on every money column at once across 30%+ of a
     /// multi-hundred-row table, so this only fires on the shape it is meant for.
+    ///
+    /// A row whose fingerprint is entirely (near-)zero is excluded from both the count this checks
+    /// against and from being counted as a duplicate — a sparse cross-tab report (every customer x
+    /// every product category, most combinations genuinely inactive that period) legitimately has
+    /// MANY unrelated customer/category rows that all happen to be zero, which is not evidence of
+    /// hierarchical duplication at all. Missing this collapsed a real Brasscraft Sales export's 2,308
+    /// distinct, non-zero customer rows down to one aggregate line and undercounted its true
+    /// $509,212.80 total by roughly two-thirds ($169,737.60) — Excel's own floating-point noise
+    /// (values like -1e-11 instead of exactly 0) meant an exact-zero check alone would have missed
+    /// it too, hence the tolerance.
     /// </summary>
-    private static bool LooksLikeHierarchicalPivot(List<List<string>> dataRows, int grandTotalIdx)
+    private static bool LooksLikeHierarchicalPivot(List<List<string>> dataRows, int grandTotalIdx, List<string>? header = null)
     {
         var others = dataRows.Where((_, i) => i != grandTotalIdx).ToList();
         if (others.Count < 5) return false;
@@ -707,8 +723,22 @@ internal static class MarkdownTableNormalizer
         var width = others[0].Count;
         var numericColumns = Enumerable.Range(0, width)
             .Where(c => others.Count(r => IsNumeric(r[c])) >= others.Count * 0.5)
+            // Exclude columns that are numeric-LOOKING but are identifiers, not money: postal/zip
+            // codes, phone numbers, account/category codes. These repeat heavily on their own (many
+            // rows for the same customer share the same postal code) and are never near-zero the
+            // way a genuinely inactive money column is, which defeats the near-zero exclusion below
+            // outright — a real Brasscraft Sales export's "Postal Code" column being swept in here
+            // made every single one of its 2,358 rows register as "non-blank" (no ZIP is ever near
+            // zero), so ordinary customers who simply had zero sales that period in most product
+            // categories all collapsed onto the same "their postal code + zeros" fingerprint,
+            // triggering this check on 68% of the table and discarding $339k of a real $509k total.
+            .Where(c => header is null || c >= header.Count ||
+                        !IdentifierColumnRegex.IsMatch(header[c]))
             .ToList();
         if (numericColumns.Count == 0) return false;
+
+        static bool IsNearZero(string v) =>
+            v.Length == 0 || (double.TryParse(v, NumberStyles.Any, CultureInfo.InvariantCulture, out var d) && Math.Abs(d) < 0.005);
 
         var seen = new HashSet<string>();
         var duplicates = 0;
@@ -716,7 +746,7 @@ internal static class MarkdownTableNormalizer
         foreach (var row in others)
         {
             var values = numericColumns.Select(c => row[c]).ToList();
-            if (values.All(v => v.Length == 0)) continue;
+            if (values.All(IsNearZero)) continue;
 
             nonBlank++;
             var key = string.Join("|", values);
