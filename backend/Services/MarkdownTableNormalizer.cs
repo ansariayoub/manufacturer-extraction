@@ -374,6 +374,17 @@ internal static class MarkdownTableNormalizer
             var beforeBlankAgg = dataRows.Count;
             dataRows = RemoveBlankLabeledAggregateRows(header, dataRows);
             droppedTotals += beforeBlankAgg - dataRows.Count;
+
+            // A narrower version of the same idea for a multi-level report where the UNLABELED
+            // aggregate isn't the document's single grand total but a subtotal for just the cluster
+            // of rows right above it (by rep, by region, ...) — e.g. five detail rows, then a blank-
+            // labeled row whose value is exactly those five rows' sum, then the next cluster starts.
+            // RemoveBlankLabeledAggregateRows can't see this (it only reconciles against the WHOLE
+            // column), so this walks forward accumulating a running group and checks each blank-
+            // labeled candidate against only that group, resetting after every match found.
+            var beforeSubtotals = dataRows.Count;
+            dataRows = RemoveBlankLabeledSubtotalRows(header, dataRows);
+            droppedTotals += beforeSubtotals - dataRows.Count;
         }
 
         // Footnote rows — a single populated cell in a wide table, e.g. the trailing
@@ -602,6 +613,74 @@ internal static class MarkdownTableNormalizer
         }
 
         return dataRows.Where(r => !(IsBlankAcrossLabels(r) && ReconcilesAsAggregate(r))).ToList();
+    }
+
+    /// <summary>
+    /// Same idea as <see cref="RemoveBlankLabeledAggregateRows"/>, one level narrower: a report with
+    /// several clusters of detail rows (by rep, by region, ...) each followed by an UNLABELED
+    /// subtotal for just that cluster, rather than one grand total for the whole table. Walking
+    /// forward and checking each blank-labeled candidate only against the rows accumulated since the
+    /// last confirmed subtotal (or the start of the table) catches this without needing the
+    /// candidate to equal the WHOLE column's sum, which it never would here.
+    /// </summary>
+    private static List<List<string>> RemoveBlankLabeledSubtotalRows(List<string> header, List<List<string>> dataRows)
+    {
+        if (dataRows.Count < 4) return dataRows;
+
+        var width = header.Count;
+        var populatedCounts = Enumerable.Range(0, width)
+            .Select(c => dataRows.Count(r => c < r.Count && r[c].Length > 0))
+            .ToList();
+
+        var labelCols = Enumerable.Range(0, width)
+            .Where(c => populatedCounts[c] >= dataRows.Count * 0.3 &&
+                        dataRows.Count(r => c < r.Count && r[c].Length > 0 && !IsNumeric(r[c])) >= populatedCounts[c] * 0.5)
+            .ToList();
+        if (labelCols.Count == 0) return dataRows;
+
+        var numericCols = Enumerable.Range(0, width)
+            .Where(c => dataRows.Count(r => c < r.Count && IsNumeric(r[c])) >= dataRows.Count * 0.5)
+            .ToList();
+        if (numericCols.Count == 0) return dataRows;
+
+        bool IsBlankAcrossLabels(List<string> row) => labelCols.All(c => c >= row.Count || row[c].Length == 0);
+
+        var result = new List<List<string>>();
+        var groupSums = numericCols.ToDictionary(c => c, _ => 0.0);
+        var groupSize = 0;
+
+        foreach (var row in dataRows)
+        {
+            // A cluster needs at least 2 real rows before a candidate can plausibly be its subtotal
+            // — one detail row "reconciling" against itself is not evidence of anything.
+            if (groupSize >= 2 && IsBlankAcrossLabels(row))
+            {
+                var populated = numericCols.Where(c => c < row.Count && IsNumeric(row[c])).ToList();
+                var matches = populated.Count(c =>
+                {
+                    var val = double.Parse(row[c], NumberStyles.Any, CultureInfo.InvariantCulture);
+                    if (Math.Abs(val) < 0.01) return false;
+                    var tolerance = Math.Max(0.02, Math.Abs(val) * 0.001);
+                    return Math.Abs(groupSums[c] - val) < tolerance;
+                });
+
+                if (populated.Count > 0 && matches >= populated.Count / 2.0)
+                {
+                    // Confirmed subtotal for the cluster just accumulated — drop it and start fresh.
+                    groupSize = 0;
+                    foreach (var c in numericCols) groupSums[c] = 0.0;
+                    continue;
+                }
+            }
+
+            result.Add(row);
+            groupSize++;
+            foreach (var c in numericCols)
+                if (c < row.Count && IsNumeric(row[c]))
+                    groupSums[c] += double.Parse(row[c], NumberStyles.Any, CultureInfo.InvariantCulture);
+        }
+
+        return result;
     }
 
     /// <summary>Index of the single unambiguous "Grand Total"/"Total général" row, or -1.</summary>

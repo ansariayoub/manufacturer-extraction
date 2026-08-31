@@ -154,23 +154,30 @@ public class DocumentProcessingService : IDocumentProcessingService
                       "The file may be in a format the extractor cannot read — open the 'Extracted' view to check."
                     : $"Nothing was extracted although ~{detectedRows} source rows were detected. The mapping step returned no lines.");
             }
-            else if (detectedRows > 0 && result.Report.Sales.Count < detectedRows * 0.85 && !result.MoneyColumnPinApplied)
+            else if (detectedRows > 0 && result.Report.Sales.Count < detectedRows * CoverageThreshold(result.MoneyColumnPinApplied))
             {
                 // A custom instruction commonly filters rows on purpose (e.g. "only extract rows
                 // where the comment column reads exactly ..."), which trips this check even though
                 // nothing was lost. Say so rather than reading as an unconditional data-loss alarm —
                 // the raw numbers are still there for the operator to judge either way.
                 //
-                // Skipped entirely when a pinned money column was applied: that mechanism reads the
-                // total straight from the source file and rescales to match it exactly (see
-                // AnalyticsTransformationService), so the dollar figure is already verified correct
-                // regardless of how many individual line items the model returned — a row-count
-                // mismatch there is expected on reports with embedded subtotal blocks (GL-code
-                // rollups, etc.) that never become canonical sales lines, not a sign of lost data.
+                // The threshold is far more generous (not skipped outright) when a pinned money
+                // column was applied: that mechanism reads the total straight from the source file
+                // and rescales to match it exactly (see AnalyticsTransformationService), so the
+                // dollar figure is already verified correct regardless of how many individual line
+                // items the model returned — a MODERATE row-count mismatch there is expected on
+                // reports with embedded subtotal blocks (GL-code rollups, etc.) that never become
+                // canonical sales lines. But an EXTREME mismatch even under a verified total can
+                // still mean something is structurally wrong with the extraction (most line items
+                // silently collapsed into far fewer than the source actually has), so this no longer
+                // suppresses the check outright — only relaxes it, from an 85% floor to 40%.
                 var maybeIntentional = !string.IsNullOrWhiteSpace(document.CustomInstructions)
                     ? " This may be expected if your processing instructions intentionally filter rows — check them before assuming data loss."
                     : "";
-                warnings.Add($"Coverage: {result.Report.Sales.Count} canonical lines for ~{detectedRows} source rows detected.{maybeIntentional}");
+                var pinnedNote = result.MoneyColumnPinApplied
+                    ? " The total itself is independently verified against the source file, but this many rows still went missing is worth a look."
+                    : "";
+                warnings.Add($"Coverage: {result.Report.Sales.Count} canonical lines for ~{detectedRows} source rows detected.{maybeIntentional}{pinnedNote}");
             }
 
             document.HasWarnings = warnings.Count > 0;
@@ -237,6 +244,17 @@ public class DocumentProcessingService : IDocumentProcessingService
             return "";
         }
     }
+
+    /// <summary>
+    /// The minimum fraction of detected source rows that must survive as canonical lines before the
+    /// "Coverage" warning fires — see the caller. 85% when nothing verifies the total independently
+    /// (the ordinary case: a genuine shortfall here usually IS lost data). Relaxed to 40%, not
+    /// suppressed, when a pinned money column already verified the dollar total against the source
+    /// file: a moderate gap there is the well-understood case of embedded subtotal/rollup rows that
+    /// never become their own canonical line, but losing more than 60% of the rows is extreme enough
+    /// that it is still worth flagging even under an otherwise-correct total.
+    /// </summary>
+    private static double CoverageThreshold(bool moneyColumnPinApplied) => moneyColumnPinApplied ? 0.40 : 0.85;
 
     /// <summary>
     /// Counts data rows across ALL markdown tables. The previous version stopped at the first
