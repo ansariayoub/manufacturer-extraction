@@ -363,6 +363,17 @@ internal static class MarkdownTableNormalizer
             // This also makes the "one row in, one row out" reconciliation exact.
             droppedTotals = dataRows.Count(IsTotalRow);
             dataRows = dataRows.Where(r => !IsTotalRow(r)).ToList();
+
+            // A second pass for the aggregate rows IsTotalRow can never see: some reports (Kutol
+            // Sales, Wheeler Sales) bury a grand-total row with every identifying/label cell BLANK —
+            // no "Total" keyword anywhere for a text-based scan to key off — sitting among otherwise
+            // ordinary transaction rows. What gives it away is arithmetic, not text: its own value in
+            // a money column exactly equals the sum of every OTHER row's value in that same column.
+            // Both real cases needed a hand-written "only include rows where <column> is not blank"
+            // instruction before this; this recovers the same result automatically.
+            var beforeBlankAgg = dataRows.Count;
+            dataRows = RemoveBlankLabeledAggregateRows(header, dataRows);
+            droppedTotals += beforeBlankAgg - dataRows.Count;
         }
 
         // Footnote rows — a single populated cell in a wide table, e.g. the trailing
@@ -532,6 +543,66 @@ internal static class MarkdownTableNormalizer
     /// </summary>
     private static bool IsTotalRow(List<string> row) =>
         row.Any(c => c.Length > 0 && TotalRowRegex.IsMatch(c));
+
+    /// <summary>
+    /// Finds and drops a grand-total row that carries NO text label at all — every identifying
+    /// column blank, only the numeric ones populated, so <see cref="IsTotalRow"/> has nothing to
+    /// match. What gives it away instead is arithmetic: its value in a money column exactly equals
+    /// the sum of every OTHER row's value in that same column. Two real reports needed this — a
+    /// Kutol Sales territory commission report and a Wheeler Sales file that buried an unlabeled
+    /// total mid-table, doubling the reported total — both previously only fixable with a hand-
+    /// written "only include rows where &lt;column&gt; is not blank" instruction.
+    ///
+    /// Deliberately conservative to avoid dropping a real transaction that happens to have blank
+    /// identifying fields for a legitimate reason (a walk-in/cash sale with no customer name, say):
+    /// requires at least 3 other rows to compare against, requires EVERY "label-like" column (one
+    /// where most rows hold non-numeric text) to be blank on the candidate row, and requires the
+    /// reconciliation to hold on at least half of the table's populated numeric columns at once —
+    /// a coincidence across several independent dollar figures simultaneously is not realistic.
+    /// </summary>
+    private static List<List<string>> RemoveBlankLabeledAggregateRows(List<string> header, List<List<string>> dataRows)
+    {
+        if (dataRows.Count < 4) return dataRows;
+
+        var width = header.Count;
+        var populatedCounts = Enumerable.Range(0, width)
+            .Select(c => dataRows.Count(r => c < r.Count && r[c].Length > 0))
+            .ToList();
+
+        var labelCols = Enumerable.Range(0, width)
+            .Where(c => populatedCounts[c] >= dataRows.Count * 0.3 &&
+                        dataRows.Count(r => c < r.Count && r[c].Length > 0 && !IsNumeric(r[c])) >= populatedCounts[c] * 0.5)
+            .ToList();
+        if (labelCols.Count == 0) return dataRows;
+
+        var numericCols = Enumerable.Range(0, width)
+            .Where(c => dataRows.Count(r => c < r.Count && IsNumeric(r[c])) >= dataRows.Count * 0.5)
+            .ToList();
+        if (numericCols.Count == 0) return dataRows;
+
+        var columnSums = numericCols.ToDictionary(c => c, c => dataRows.Sum(r =>
+            c < r.Count && IsNumeric(r[c]) ? double.Parse(r[c], NumberStyles.Any, CultureInfo.InvariantCulture) : 0));
+
+        bool IsBlankAcrossLabels(List<string> row) => labelCols.All(c => c >= row.Count || row[c].Length == 0);
+
+        bool ReconcilesAsAggregate(List<string> row)
+        {
+            var populated = numericCols.Where(c => c < row.Count && IsNumeric(row[c])).ToList();
+            if (populated.Count == 0) return false;
+
+            var matches = populated.Count(c =>
+            {
+                var val = double.Parse(row[c], NumberStyles.Any, CultureInfo.InvariantCulture);
+                if (Math.Abs(val) < 0.01) return false; // a trivial zero match carries no evidence
+                var tolerance = Math.Max(0.02, Math.Abs(val) * 0.001);
+                return Math.Abs(columnSums[c] - 2 * val) < tolerance;
+            });
+
+            return matches > 0 && matches >= populated.Count / 2.0;
+        }
+
+        return dataRows.Where(r => !(IsBlankAcrossLabels(r) && ReconcilesAsAggregate(r))).ToList();
+    }
 
     /// <summary>Index of the single unambiguous "Grand Total"/"Total général" row, or -1.</summary>
     private static int FindGrandTotalRow(List<List<string>> dataRows)
