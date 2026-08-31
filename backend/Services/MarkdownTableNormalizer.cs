@@ -60,7 +60,13 @@ internal static class MarkdownTableNormalizer
         // "summary" catches a MotorScrubber/Western Sales export's leading "Grand Summary:" row,
         // which otherwise survives as a fake line item (its own "Total excl. shipping" cell equals
         // the document's real grand total, which is not a per-item sale).
-        @"^\s*((grand|overall)\s+)?(total|totals|subtotal|sub-total|sum|result|summary)\b|\btot\b\s*$",
+        // Trailing "\btotal\b\s*$" (not just the abbreviated "tot") catches an Excel PivotTable's own
+        // per-group subtotal label — "FERGUSON ENTERPRISES INC Total", "WINWHOLESALE INCORPORATED
+        // Total" — sitting at the END of the customer/branch name rather than as its own word at the
+        // start. A real Eemax export nests Customer > Branch > Postal Code with exactly this labeling
+        // at the Customer/Branch levels; missing it let those rollup rows survive as if they were
+        // leaf transactions and double-count everything under them.
+        @"^\s*((grand|overall)\s+)?(total|totals|subtotal|sub-total|sum|result|summary)\b|\btot\b\s*$|\btotal\s*$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     // Matches a cell that IS a grand-total row label and nothing else — "Grand Total", or Excel's
@@ -306,28 +312,34 @@ internal static class MarkdownTableNormalizer
         // "Grand Total" / "Total général" row, trust that single figure — it is the workbook's own
         // correct aggregate — instead of the detail rows above it.
         var grandTotalIdx = FindGrandTotalRow(dataRows);
-        var repeatedHeaderPivot = grandTotalIdx >= 0 && HasRepeatedMoneyColumnHeaders(header, dataRows);
-        var isHierarchicalPivot = grandTotalIdx >= 0 &&
-            (repeatedHeaderPivot || LooksLikeHierarchicalPivot(dataRows, grandTotalIdx));
+        var duplicateRowPivot = grandTotalIdx >= 0 && LooksLikeHierarchicalPivot(dataRows, grandTotalIdx);
+        // A table can independently look like a "duplicate rows" pivot (Customer > Sub-account >
+        // Order > Invoice, no reliable per-row way to tell a rollup from the one real leaf beneath
+        // it — see LooksLikeHierarchicalPivot) AND ALSO have repeated period columns. When both fire
+        // at once (observed on a real Eemax archive export), melting by period has no way to exclude
+        // the ancestor rollups — they carry no "Total" label at any level — so it would count each
+        // real transaction 3-5x over. Only take the melt path when the table is NOT also that shape;
+        // duplicateRowPivot's own single-Grand-Total-row collapse below still gives the right total.
+        var repeatedHeaderPivot = grandTotalIdx >= 0 && !duplicateRowPivot && HasRepeatedMoneyColumnHeaders(header, dataRows);
+        var isHierarchicalPivot = repeatedHeaderPivot || duplicateRowPivot;
 
         int droppedTotals;
-        var (splitHeader, splitRows) = repeatedHeaderPivot
-            ? SplitPeriodGroupsIntoRows(header, dataRows, grandTotalIdx)
-            : (null, null);
+        var (meltedHeader, meltedRows, meltedDropped) = repeatedHeaderPivot
+            ? MeltPeriodColumns(header, dataRows, grandTotalIdx)
+            : (null, null, 0);
 
-        if (splitHeader is not null && splitRows is not null)
+        if (meltedHeader is not null && meltedRows is not null)
         {
-            // Unlike the plain duplicate-row case below, collapsing to ONE row here would leave a
-            // single row carrying several periods' worth of money columns side by side (Jan Net
-            // Sales, Jan Commission, Feb Net Sales, Feb Commission, ...) — a shape the model reads as
-            // ONE transaction, not several, so it picks a single column (observed: whichever period
-            // comes last) and silently discards the rest. Splitting the Grand Total row into one
-            // row PER period instead gives the model back the "one row = one transaction" shape it
-            // already handles correctly everywhere else, at the cost of losing the per-customer
-            // detail this collapse already gave up.
-            droppedTotals = dataRows.Count - splitRows.Count;
-            header = splitHeader;
-            dataRows = splitRows;
+            // Every real (non-subtotal) row gets split into one row per period instead of collapsing
+            // the whole table down to its Grand Total row — see MeltPeriodColumns. This keeps every
+            // genuine customer/branch/leaf transaction as its own line, which the earlier single-row
+            // collapse discarded entirely; only the workbook's own subtotal/rollup rows (matched the
+            // same way ordinary total rows are, now including a trailing "<Name> Total" label) and
+            // the Grand Total row itself are dropped, since both are redundant once every leaf row
+            // is kept.
+            droppedTotals = meltedDropped;
+            header = meltedHeader;
+            dataRows = meltedRows;
         }
         else if (isHierarchicalPivot)
         {
@@ -597,18 +609,21 @@ internal static class MarkdownTableNormalizer
     }
 
     /// <summary>
-    /// Turns a single Grand Total row spanning several repeated period column-groups (see
-    /// <see cref="HasRepeatedMoneyColumnHeaders"/>) into one row PER period, each carrying just that
-    /// period's own sub-columns — e.g. "Jan | Jan | Feb | Feb" over "Net Sales | Commission | Net
-    /// Sales | Commission" becomes two rows, "Jan | &lt;netSales&gt; | &lt;commission&gt;" and "Feb |
-    /// &lt;netSales&gt; | &lt;commission&gt;". Columns whose top header starts with "Total" are
-    /// dropped rather than turned into their own period, since they already sum every other period
-    /// and summing the split rows would double the total. The sub-column names (Net Sales,
-    /// Commission, ...) come from whichever OTHER row in the table reads as a header itself — Excel's
-    /// pivot export puts that row immediately under the period-group header, ahead of any real data —
-    /// falling back to generic names if none is found.
+    /// Turns a table with several repeated period column-groups (see
+    /// <see cref="HasRepeatedMoneyColumnHeaders"/>) — e.g. "Jan | Jan | Feb | Feb" over "Net Sales |
+    /// Commission | Net Sales | Commission" — into one row PER (real row × period) pair: a customer
+    /// with Jan and Feb figures becomes two rows, "&lt;customer&gt; | Jan | &lt;netSales&gt; |
+    /// &lt;commission&gt;" and "&lt;customer&gt; | Feb | &lt;netSales&gt; | &lt;commission&gt;". This
+    /// keeps every genuine leaf row as its own transaction — unlike collapsing straight to the Grand
+    /// Total row, which is correct for the total but throws every real customer/branch line away.
+    ///
+    /// Columns whose top header starts with "Total" are dropped rather than turned into their own
+    /// period, since they already sum every other period and melting them too would double the
+    /// total. Rows matching <see cref="IsTotalRow"/> (which now also catches a PivotTable's own
+    /// "&lt;Name&gt; Total" subtotal label, not just a leading "Total") are excluded entirely — they
+    /// are redundant rollups once every leaf row survives, not real transactions.
     /// </summary>
-    private static (List<string>? Header, List<List<string>>? Rows) SplitPeriodGroupsIntoRows(
+    private static (List<string>? Header, List<List<string>>? Rows, int Dropped) MeltPeriodColumns(
         List<string> header, List<List<string>> dataRows, int grandTotalIdx)
     {
         var grandRow = dataRows[grandTotalIdx];
@@ -624,7 +639,9 @@ internal static class MarkdownTableNormalizer
 
         var periodGroups = groups
             .Where(g => g.Label.Length > 0 && !g.Label.StartsWith("Total", StringComparison.OrdinalIgnoreCase))
+            .Select(g => (g.Start, g.Len))
             .ToList();
+        var headerIsPeriodRow = true;
 
         // A real period grouping is 2+ columns wide (a money column and at least a commission
         // column repeated per period, as in every case this was built for). Some pivot exports have
@@ -637,10 +654,10 @@ internal static class MarkdownTableNormalizer
         {
             // The true period row (the one with "Jan"/"Feb"/"Mar"...) was flattened into unstructured
             // preamble text by the time this code runs, so its column boundaries can't be recovered
-            // from text. But the Grand Total row itself still carries the shape: label-only prefix
-            // columns (Customer Name, Branch, Postal Code) are always blank on that row, while every
-            // real period's money/commission columns are populated — so grouping by "does the Grand
-            // Total row have a value here" recovers the same column runs without needing the label.
+            // from text. But the Grand Total row still carries the shape: label-only prefix columns
+            // (Customer Name, Branch, Postal Code) are always blank on that row, while every real
+            // period's money/commission columns are populated — so grouping by "does the Grand Total
+            // row have a value here" recovers the same column runs without needing the label.
             var numericGroups = new List<(int Start, int Len)>();
             for (int c = 0; c < grandRow.Count;)
             {
@@ -676,23 +693,13 @@ internal static class MarkdownTableNormalizer
             // reinterpreted as "one period".
             if (numericGroups.Count >= 2 && numericGroups.Select(g => g.Len).Distinct().Count() == 1)
             {
-                var groupWidth = numericGroups[0].Len;
-                var rows = numericGroups
-                    .Select((g, i) => new List<string> { $"Period {i + 1}" }
-                        .Concat(Enumerable.Range(g.Start, g.Len).Select(c => grandRow[c]))
-                        .ToList())
-                    .ToList();
-                var names = Enumerable.Range(0, groupWidth)
-                    .Select(k =>
-                    {
-                        var col = numericGroups[0].Start + k;
-                        return col < header.Count && header[col].Length > 0 ? header[col] : $"Value{k + 1}";
-                    })
-                    .ToList();
-                return (new List<string> { "Period" }.Concat(names).ToList(), rows);
+                periodGroups = numericGroups;
+                headerIsPeriodRow = false;
             }
-
-            return (null, null);
+            else
+            {
+                return (null, null, 0);
+            }
         }
 
         var subHeaderRow = dataRows.FirstOrDefault(r =>
@@ -705,19 +712,60 @@ internal static class MarkdownTableNormalizer
             .Select(k =>
             {
                 var col = periodGroups[0].Start + k;
-                var name = subHeaderRow is not null && col < subHeaderRow.Count ? subHeaderRow[col] : "";
+                // When `header` is the real period row (Jan/Jan/Feb/Feb), the sub-column names (Net
+                // Sales/Commission) live in `subHeaderRow` instead. When the numeric-run fallback
+                // fired, `header` already IS that Net Sales/Commission row, so use it directly.
+                var name = headerIsPeriodRow
+                    ? (subHeaderRow is not null && col < subHeaderRow.Count ? subHeaderRow[col] : "")
+                    : (col < header.Count ? header[col] : "");
                 return name.Length > 0 ? name : $"Value{k + 1}";
             })
             .ToList();
 
-        var newHeader = new List<string> { "Period" }.Concat(subHeaderNames).ToList();
-        var newRows = periodGroups
-            .Select(g => new List<string> { g.Label }
-                .Concat(Enumerable.Range(g.Start, g.Len).Select(c => c < grandRow.Count ? grandRow[c] : ""))
-                .ToList())
+        var periodLabels = Enumerable.Range(0, periodGroups.Count)
+            .Select(i => headerIsPeriodRow && header[periodGroups[i].Start].Length > 0 && header[periodGroups[i].Start].Length < 20
+                ? header[periodGroups[i].Start]
+                : $"Period {i + 1}")
             .ToList();
 
-        return (newHeader, newRows);
+        var identityEnd = periodGroups.Min(g => g.Start);
+        var dropped = 0;
+        var newRows = new List<List<string>>();
+
+        for (int r = 0; r < dataRows.Count; r++)
+        {
+            if (r == grandTotalIdx || row_is_subheader(dataRows[r], subHeaderRow) || IsTotalRow(dataRows[r]))
+            {
+                dropped++;
+                continue;
+            }
+
+            var row = dataRows[r];
+            var identity = string.Join(" ", Enumerable.Range(0, Math.Min(identityEnd, row.Count))
+                .Select(c => row[c])
+                .Where(v => v.Length > 0));
+            if (identity.Length == 0) identity = "(unlabeled)";
+
+            var contributedAny = false;
+            for (int g = 0; g < periodGroups.Count; g++)
+            {
+                var (start, len) = periodGroups[g];
+                var vals = Enumerable.Range(start, len).Select(c => c < row.Count ? row[c] : "").ToList();
+                if (vals.All(v => v.Length == 0)) continue;
+
+                contributedAny = true;
+                newRows.Add(new List<string> { identity, periodLabels[g] }.Concat(vals).ToList());
+            }
+
+            if (!contributedAny) dropped++;
+        }
+
+        if (newRows.Count == 0) return (null, null, 0);
+
+        var newHeader = new List<string> { "Customer", "Period" }.Concat(subHeaderNames).ToList();
+        return (newHeader, newRows, dropped);
+
+        static bool row_is_subheader(List<string> row, List<string>? subHeaderRow) => row == subHeaderRow;
     }
 
     /// <summary>
