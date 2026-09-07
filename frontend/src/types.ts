@@ -72,3 +72,13 @@ export interface UploadRequest {
   periodYear: string;
   customInstructions: string;
 }
+
+// From GET/POST/PUT /api/manufacturers (ManufacturersController) — the admin-managed replacement
+// for the previously hardcoded MANUFACTURERS array.
+export interface Manufacturer {
+  id: string;
+  name: string;
+  /** Pre-fills the "Processing instructions" box whenever this manufacturer is picked for a new upload. */
+  defaultInstructions: string | null;
+  createdDate: string;
+}

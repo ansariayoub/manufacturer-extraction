@@ -1,0 +1,225 @@
+import { useState } from 'react';
+import type { Manufacturer } from '../types';
+import type { Theme } from '../hooks/useTheme';
+
+interface Props {
+  manufacturers: Manufacturer[];
+  onCreate: (name: string) => Promise<void>;
+  onUpdate: (id: string, changes: { name?: string; defaultInstructions?: string | null }) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+  theme: Theme;
+  onThemeChange: (t: Theme) => void;
+  onClose: () => void;
+}
+
+/**
+ * Admin Settings page: manages the manufacturer picker (previously a hardcoded frontend array —
+ * see data/manufacturers.ts, now unused) and each manufacturer's default "processing instructions"
+ * template, which the upload screen pre-fills whenever that manufacturer is selected. Also holds
+ * the light/dark mode toggle.
+ */
+export function SettingsPage({ manufacturers, onCreate, onUpdate, onDelete, theme, onThemeChange, onClose }: Props) {
+  const [newName, setNewName] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [draftInstructions, setDraftInstructions] = useState('');
+  const [renameId, setRenameId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleCreate() {
+    const name = newName.trim();
+    if (!name) return;
+    setCreating(true);
+    setError(null);
+    try {
+      await onCreate(name);
+      setNewName('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to add manufacturer.');
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  function startEditInstructions(m: Manufacturer) {
+    setExpandedId(m.id);
+    setDraftInstructions(m.defaultInstructions ?? '');
+  }
+
+  async function saveInstructions(id: string) {
+    setBusyId(id);
+    setError(null);
+    try {
+      await onUpdate(id, { defaultInstructions: draftInstructions.trim() || null });
+      setExpandedId(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save default instructions.');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function saveRename(id: string) {
+    const name = renameDraft.trim();
+    if (!name) { setRenameId(null); return; }
+    setBusyId(id);
+    setError(null);
+    try {
+      await onUpdate(id, { name });
+      setRenameId(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to rename manufacturer.');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function handleDelete(m: Manufacturer) {
+    if (!window.confirm(`Remove "${m.name}" from the manufacturer list? Documents already uploaded under this name are not affected.`)) return;
+    setBusyId(m.id);
+    setError(null);
+    try {
+      await onDelete(m.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to remove manufacturer.');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <div style={{ maxWidth: 980, margin: '0 auto', padding: '30px 40px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 26 }}>
+        <h2 style={{ fontSize: 28 }}>Settings</h2>
+        <button className="pill" style={{ marginLeft: 'auto' }} onClick={onClose}>← Back to queue</button>
+      </div>
+
+      {error && (
+        <div style={{
+          marginBottom: 18, padding: '12px 16px', borderRadius: 8,
+          background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', fontSize: 14,
+        }}>
+          {error}
+        </div>
+      )}
+
+      <div className="card" style={{ padding: 22, marginBottom: 22 }}>
+        <h3 style={{ fontSize: 19, marginBottom: 4 }}>Appearance</h3>
+        <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 14 }}>
+          Applies to this browser only.
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            className={theme === 'light' ? 'pill pill-solid' : 'pill'}
+            onClick={() => onThemeChange('light')}
+          >
+            ☀ Light
+          </button>
+          <button
+            className={theme === 'dark' ? 'pill pill-solid' : 'pill'}
+            onClick={() => onThemeChange('dark')}
+          >
+            ☾ Dark
+          </button>
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 22 }}>
+        <h3 style={{ fontSize: 19, marginBottom: 4 }}>Manufacturers</h3>
+        <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 16 }}>
+          The list offered on the upload screen. Give a manufacturer a default set of processing
+          instructions here and it will pre-fill the instructions box automatically whenever that
+          manufacturer is picked for a new import — still editable per file at upload time.
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, marginBottom: 18 }}>
+          <input
+            className="fld"
+            style={{ flex: 1 }}
+            placeholder="New manufacturer name…"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleCreate(); }}
+          />
+          <button className="pill pill-solid" disabled={creating || !newName.trim()} onClick={handleCreate}>
+            {creating ? 'Adding…' : '+ Add manufacturer'}
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+          {manufacturers.length === 0 && (
+            <div style={{ color: 'var(--muted)', fontSize: 13.5, padding: '14px 0' }}>No manufacturers yet.</div>
+          )}
+          {manufacturers.map((m) => (
+            <div key={m.id} style={{ borderBottom: '1px solid var(--line-soft)', padding: '14px 0' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                {renameId === m.id ? (
+                  <input
+                    className="fld"
+                    style={{ flex: 1 }}
+                    autoFocus
+                    value={renameDraft}
+                    onChange={(e) => setRenameDraft(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') saveRename(m.id); if (e.key === 'Escape') setRenameId(null); }}
+                  />
+                ) : (
+                  <span style={{ flex: 1, fontSize: 14.5, color: 'var(--ink)' }}>{m.name}</span>
+                )}
+
+                {m.defaultInstructions && renameId !== m.id && (
+                  <span className="pill" style={{ fontSize: 11.5, padding: '3px 10px', color: 'var(--orange)', cursor: 'default' }}>
+                    ✦ has default prompt
+                  </span>
+                )}
+
+                {renameId === m.id ? (
+                  <>
+                    <button className="pill" disabled={busyId === m.id} onClick={() => saveRename(m.id)}>Save</button>
+                    <button className="pill" onClick={() => setRenameId(null)}>Cancel</button>
+                  </>
+                ) : (
+                  <>
+                    <button className="pill" onClick={() => startEditInstructions(m)}>
+                      {m.defaultInstructions ? 'Edit prompt' : '+ Default prompt'}
+                    </button>
+                    <button className="pill" onClick={() => { setRenameId(m.id); setRenameDraft(m.name); }}>Rename</button>
+                    <button className="icon-btn" disabled={busyId === m.id} onClick={() => handleDelete(m)} title="Remove manufacturer">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                        <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6" />
+                      </svg>
+                    </button>
+                  </>
+                )}
+              </div>
+
+              {expandedId === m.id && (
+                <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <textarea
+                    rows={3}
+                    autoFocus
+                    placeholder='e.g. On sheet "Direct Sales Data" use "Sales $" as netSales.'
+                    style={{
+                      width: '100%', padding: '10px 12px', font: 'inherit', fontSize: 13.5,
+                      color: 'var(--ink)', background: 'var(--bg)', border: '1px solid var(--line)',
+                      borderRadius: 8, resize: 'vertical',
+                    }}
+                    value={draftInstructions}
+                    onChange={(e) => setDraftInstructions(e.target.value)}
+                  />
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button className="pill pill-solid" disabled={busyId === m.id} onClick={() => saveInstructions(m.id)}>
+                      {busyId === m.id ? 'Saving…' : 'Save default prompt'}
+                    </button>
+                    <button className="pill" onClick={() => setExpandedId(null)}>Cancel</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}

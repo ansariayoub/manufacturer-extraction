@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { ChangeEvent, DragEvent } from 'react';
-import { MANUFACTURERS } from '../data/manufacturers';
+import type { Manufacturer } from '../types';
 
 const MONTH_OPTIONS = [
   ['01', 'January'], ['02', 'February'], ['03', 'March'], ['04', 'April'],
@@ -11,6 +11,7 @@ const YEAR_OPTIONS = ['2026', '2025', '2024'];
 
 interface Props {
   manufacturer: string;
+  manufacturers: Manufacturer[];
   month: string;
   year: string;
   onManufacturerChange: (v: string) => void;
@@ -20,7 +21,7 @@ interface Props {
 }
 
 export function NewBatchPanel({
-  manufacturer, month, year,
+  manufacturer, manufacturers, month, year,
   onManufacturerChange, onMonthChange, onYearChange, onFilesAdded,
 }: Props) {
   const [dragging, setDragging] = useState(false);
@@ -55,7 +56,7 @@ export function NewBatchPanel({
             onChange={(e) => onManufacturerChange(e.target.value)}
           >
             <option value="" disabled>Select a manufacturer…</option>
-            {MANUFACTURERS.map((m) => <option key={m} value={m}>{m}</option>)}
+            {manufacturers.map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
           </select>
         </label>
 

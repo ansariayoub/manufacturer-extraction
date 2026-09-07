@@ -16,6 +16,22 @@
   --orange: #e2762c;
 }
 
+/* Dark mode — an explicit choice (data-theme="dark", set by the Settings page toggle and
+   persisted to localStorage) always wins; :root stays the light source of truth otherwise. */
+:root[data-theme="dark"] {
+  --ink: #e7edf5;
+  --text: #c3cdda;
+  --muted: #8695a8;
+  --bg: #0f1720;
+  --surface: #161f2b;
+  --line: #263140;
+  --line-soft: #1c2634;
+  --blue: #6ea3d8;
+  --blue-deep: #9dc3ec;
+  --blue-soft: #1c2c3d;
+  --orange: #e79256;
+}
+
 * { box-sizing: border-box; }
 
 body {

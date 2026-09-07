@@ -10,6 +10,7 @@ public class AppDbContext : DbContext
     public DbSet<Document> Documents => Set<Document>();
     public DbSet<RawExtraction> RawExtractions => Set<RawExtraction>();
     public DbSet<AnalyticsExtraction> AnalyticsExtractions => Set<AnalyticsExtraction>();
+    public DbSet<Manufacturer> Manufacturers => Set<Manufacturer>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -43,6 +44,16 @@ public class AppDbContext : DbContext
         {
             entity.HasKey(a => a.Id);
             entity.Property(a => a.AnalyticsJson).HasColumnType("nvarchar(max)");
+        });
+
+        modelBuilder.Entity<Manufacturer>(entity =>
+        {
+            entity.HasKey(m => m.Id);
+            // Case-insensitive uniqueness at the SQL Server default collation would already dedupe
+            // "Rheem" vs "rheem", but an explicit index also makes the intent visible and gives a
+            // clean constraint-violation error instead of a silent duplicate row.
+            entity.HasIndex(m => m.Name).IsUnique();
+            entity.Property(m => m.Name).HasMaxLength(200);
         });
     }
 }

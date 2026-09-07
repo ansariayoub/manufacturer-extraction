@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { DocumentDetail, DocumentSummary } from './types';
+import type { DocumentDetail, DocumentSummary, Manufacturer } from './types';
 import {
   listDocuments, listStatuses, getDocument, uploadDocument,
   analyzeDocument, deleteDocument, reanalyzeDocument,
 } from './api/documentsApi';
+import { listManufacturers, createManufacturer, updateManufacturer, deleteManufacturer } from './api/manufacturersApi';
+import { useTheme } from './hooks/useTheme';
 import { AppHeader } from './components/AppHeader';
 import { NewBatchPanel } from './components/NewBatchPanel';
 import { InstructionsPanel } from './components/InstructionsPanel';
 import { QueueStats } from './components/QueueStats';
 import { DocumentQueueTable } from './components/DocumentQueueTable';
 import { DocumentViewerModal } from './components/DocumentViewerModal';
+import { SettingsPage } from './components/SettingsPage';
 import './styles/tokens.css';
 
 // Fast tick while anything is moving, slow tick when the queue is idle. Previously a flat 2s
@@ -31,6 +34,10 @@ export default function App() {
   const [month, setMonth] = useState('06');
   const [year, setYear] = useState('2026');
   const [instructions, setInstructions] = useState('');
+
+  const [manufacturers, setManufacturers] = useState<Manufacturer[]>([]);
+  const [view, setView] = useState<'queue' | 'settings'>('queue');
+  const { theme, setTheme } = useTheme();
 
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [viewer, setViewer] = useState<{ id: string; tab: 'source' | 'extract' | 'canon' | 'instructions' } | null>(null);
@@ -118,6 +125,46 @@ export default function App() {
       requestInFlightRef.current = false;
     }
   }, []);
+
+  const refreshManufacturers = useCallback(async () => {
+    try {
+      setManufacturers(await listManufacturers());
+    } catch (err) {
+      console.error('Failed to load manufacturers', err);
+    }
+  }, []);
+
+  useEffect(() => { refreshManufacturers(); }, [refreshManufacturers]);
+
+  /**
+   * Per the admin's spec: picking a manufacturer pre-fills the instructions box with whatever
+   * default was configured for it in Settings, which the operator can still freely edit for this
+   * one import without changing the saved default. Switching manufacturer always overwrites the
+   * box (even a non-empty one) since the box is scoped to "the import about to happen", not a
+   * running draft independent of which manufacturer is selected.
+   */
+  function handleManufacturerChange(name: string) {
+    setManufacturer(name);
+    const match = manufacturers.find((m) => m.name === name);
+    setInstructions(match?.defaultInstructions ?? '');
+  }
+
+  async function handleCreateManufacturer(name: string) {
+    const created = await createManufacturer(name);
+    setManufacturers((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
+  }
+
+  async function handleUpdateManufacturer(id: string, changes: { name?: string; defaultInstructions?: string | null }) {
+    const updated = await updateManufacturer(id, changes);
+    setManufacturers((prev) =>
+      prev.map((m) => (m.id === id ? updated : m)).sort((a, b) => a.name.localeCompare(b.name))
+    );
+  }
+
+  async function handleDeleteManufacturer(id: string) {
+    await deleteManufacturer(id);
+    setManufacturers((prev) => prev.filter((m) => m.id !== id));
+  }
 
   // Recursive setTimeout rather than setInterval: a slow response can never cause ticks to stack
   // up, and the delay adapts to whether anything is actually running.
@@ -263,9 +310,26 @@ export default function App() {
   const queueSummary = `${month}/${year} · ${manufacturer || 'no manufacturer set'} · ${doneDocs.length} of ${documents.length} complete` +
     (flaggedCount > 0 ? ` · ${flaggedCount} flagged` : '');
 
+  if (view === 'settings') {
+    return (
+      <div style={{ minHeight: '100vh', paddingBottom: 72 }}>
+        <AppHeader onOpenSettings={() => setView('queue')} />
+        <SettingsPage
+          manufacturers={manufacturers}
+          onCreate={handleCreateManufacturer}
+          onUpdate={handleUpdateManufacturer}
+          onDelete={handleDeleteManufacturer}
+          theme={theme}
+          onThemeChange={setTheme}
+          onClose={() => setView('queue')}
+        />
+      </div>
+    );
+  }
+
   return (
     <div style={{ minHeight: '100vh', paddingBottom: 72 }}>
-      <AppHeader />
+      <AppHeader onOpenSettings={() => setView('settings')} />
 
       <div style={{ maxWidth: 1680, margin: '0 auto', padding: '30px 40px' }}>
         {connectionIssue && (
@@ -282,9 +346,10 @@ export default function App() {
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.05fr) minmax(0,1fr)', gap: 18, alignItems: 'stretch', marginBottom: 34 }}>
           <NewBatchPanel
             manufacturer={manufacturer}
+            manufacturers={manufacturers}
             month={month}
             year={year}
-            onManufacturerChange={setManufacturer}
+            onManufacturerChange={handleManufacturerChange}
             onMonthChange={setMonth}
             onYearChange={setYear}
             onFilesAdded={handleFilesAdded}
