@@ -1,4 +1,4 @@
-import type { Manufacturer } from '../types';
+import type { Manufacturer, ManufacturerPromptHistoryEntry } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5193';
 
@@ -48,4 +48,14 @@ export async function updateManufacturer(
 export async function deleteManufacturer(id: string): Promise<void> {
   const res = await fetch(`${BASE_URL}/api/manufacturers/${id}`, { method: 'DELETE' });
   return handle<void>(res);
+}
+
+/**
+ * GET /api/manufacturers/{id}/prompt-history — past default-prompt versions, newest first. A new
+ * entry is recorded automatically (server-side) each time updateManufacturer changes an existing,
+ * non-blank default to something different.
+ */
+export async function listPromptHistory(id: string): Promise<ManufacturerPromptHistoryEntry[]> {
+  const res = await fetch(`${BASE_URL}/api/manufacturers/${id}/prompt-history`);
+  return handle<ManufacturerPromptHistoryEntry[]>(res);
 }

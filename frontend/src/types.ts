@@ -82,3 +82,10 @@ export interface Manufacturer {
   defaultInstructions: string | null;
   createdDate: string;
 }
+
+// From GET /api/manufacturers/{id}/prompt-history — past DefaultInstructions values, newest first.
+export interface ManufacturerPromptHistoryEntry {
+  id: string;
+  instructions: string;
+  createdDate: string;
+}

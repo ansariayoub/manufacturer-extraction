@@ -11,6 +11,7 @@ public class AppDbContext : DbContext
     public DbSet<RawExtraction> RawExtractions => Set<RawExtraction>();
     public DbSet<AnalyticsExtraction> AnalyticsExtractions => Set<AnalyticsExtraction>();
     public DbSet<Manufacturer> Manufacturers => Set<Manufacturer>();
+    public DbSet<ManufacturerPromptHistory> ManufacturerPromptHistory => Set<ManufacturerPromptHistory>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -54,6 +55,21 @@ public class AppDbContext : DbContext
             // clean constraint-violation error instead of a silent duplicate row.
             entity.HasIndex(m => m.Name).IsUnique();
             entity.Property(m => m.Name).HasMaxLength(200);
+        });
+
+        modelBuilder.Entity<ManufacturerPromptHistory>(entity =>
+        {
+            entity.HasKey(h => h.Id);
+            entity.Property(h => h.Instructions).HasColumnType("nvarchar(max)");
+            entity.HasIndex(h => new { h.ManufacturerId, h.CreatedDate });
+
+            // No navigation collection on Manufacturer, no cascade-configured delete needed beyond
+            // the default (Cascade) — removing a manufacturer from the picker should take its prompt
+            // history with it rather than leave orphaned rows.
+            entity.HasOne(h => h.Manufacturer)
+                  .WithMany()
+                  .HasForeignKey(h => h.ManufacturerId)
+                  .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

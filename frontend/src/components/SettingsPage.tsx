@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import type { Manufacturer } from '../types';
+import type { Manufacturer, ManufacturerPromptHistoryEntry } from '../types';
 import type { Theme } from '../hooks/useTheme';
+import { listPromptHistory } from '../api/manufacturersApi';
 
 interface Props {
   manufacturers: Manufacturer[];
@@ -10,6 +11,12 @@ interface Props {
   theme: Theme;
   onThemeChange: (t: Theme) => void;
   onClose: () => void;
+}
+
+function formatTimestamp(iso: string) {
+  return new Date(iso).toLocaleString(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
 }
 
 /**
@@ -27,6 +34,10 @@ export function SettingsPage({ manufacturers, onCreate, onUpdate, onDelete, them
   const [renameDraft, setRenameDraft] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const [historyOpenId, setHistoryOpenId] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyById, setHistoryById] = useState<Record<string, ManufacturerPromptHistoryEntry[]>>({});
 
   async function handleCreate() {
     const name = newName.trim();
@@ -54,6 +65,12 @@ export function SettingsPage({ manufacturers, onCreate, onUpdate, onDelete, them
     try {
       await onUpdate(id, { defaultInstructions: draftInstructions.trim() || null });
       setExpandedId(null);
+      // The server just recorded the outgoing value as a new history entry — drop the cached list
+      // so the next "History" click re-fetches instead of showing a now-stale snapshot.
+      setHistoryById((prev) => {
+        const { [id]: _drop, ...rest } = prev;
+        return rest;
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save default instructions.');
     } finally {
@@ -74,6 +91,30 @@ export function SettingsPage({ manufacturers, onCreate, onUpdate, onDelete, them
     } finally {
       setBusyId(null);
     }
+  }
+
+  async function toggleHistory(m: Manufacturer) {
+    if (historyOpenId === m.id) { setHistoryOpenId(null); return; }
+    setHistoryOpenId(m.id);
+    setExpandedId(null);
+    if (historyById[m.id]) return; // already fetched this session
+    setHistoryLoading(true);
+    setError(null);
+    try {
+      const entries = await listPromptHistory(m.id);
+      setHistoryById((prev) => ({ ...prev, [m.id]: entries }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load prompt history.');
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  /** Loads a past version back into the edit box for review rather than saving it immediately. */
+  function restoreVersion(m: Manufacturer, entry: ManufacturerPromptHistoryEntry) {
+    setHistoryOpenId(null);
+    setExpandedId(m.id);
+    setDraftInstructions(entry.instructions);
   }
 
   async function handleDelete(m: Manufacturer) {
@@ -184,6 +225,9 @@ export function SettingsPage({ manufacturers, onCreate, onUpdate, onDelete, them
                     <button className="pill" onClick={() => startEditInstructions(m)}>
                       {m.defaultInstructions ? 'Edit prompt' : '+ Default prompt'}
                     </button>
+                    <button className={historyOpenId === m.id ? 'pill pill-solid' : 'pill'} onClick={() => toggleHistory(m)}>
+                      History
+                    </button>
                     <button className="pill" onClick={() => { setRenameId(m.id); setRenameDraft(m.name); }}>Rename</button>
                     <button className="icon-btn" disabled={busyId === m.id} onClick={() => handleDelete(m)} title="Remove manufacturer">
                       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
@@ -214,6 +258,39 @@ export function SettingsPage({ manufacturers, onCreate, onUpdate, onDelete, them
                     </button>
                     <button className="pill" onClick={() => setExpandedId(null)}>Cancel</button>
                   </div>
+                </div>
+              )}
+
+              {historyOpenId === m.id && (
+                <div style={{ marginTop: 12 }}>
+                  {historyLoading && !historyById[m.id] ? (
+                    <div style={{ color: 'var(--muted)', fontSize: 13, padding: '6px 0' }}>Loading history…</div>
+                  ) : (historyById[m.id]?.length ?? 0) === 0 ? (
+                    <div style={{ color: 'var(--muted)', fontSize: 13, padding: '6px 0' }}>
+                      No earlier versions yet — history starts recording the next time this manufacturer's default prompt is changed.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {historyById[m.id]!.map((entry) => (
+                        <div key={entry.id} style={{
+                          display: 'flex', gap: 12, alignItems: 'flex-start',
+                          padding: '10px 12px', background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: 8,
+                        }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div className="lbl" style={{ marginBottom: 4 }}>{formatTimestamp(entry.createdDate)}</div>
+                            <div style={{
+                              fontSize: 13, color: 'var(--text)', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                            }}>
+                              {entry.instructions}
+                            </div>
+                          </div>
+                          <button className="pill" style={{ flex: 'none' }} onClick={() => restoreVersion(m, entry)}>
+                            Restore
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

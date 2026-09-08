@@ -79,13 +79,45 @@ public class ManufacturersController : ControllerBase
         // rename-only PUT (DefaultInstructions absent) never wipes out an existing default.
         if (request.DefaultInstructions is not null)
         {
-            manufacturer.DefaultInstructions = string.IsNullOrWhiteSpace(request.DefaultInstructions)
+            var newInstructions = string.IsNullOrWhiteSpace(request.DefaultInstructions)
                 ? null
                 : request.DefaultInstructions.Trim();
+
+            // Snapshot the OUTGOING value before it's overwritten — history is the trail of what a
+            // manufacturer's default USED to be, so there is nothing to record the first time a
+            // prompt is set (nothing existed before it) or when saving the exact same text again.
+            if (!string.IsNullOrWhiteSpace(manufacturer.DefaultInstructions)
+                && manufacturer.DefaultInstructions != newInstructions)
+            {
+                _db.ManufacturerPromptHistory.Add(new ManufacturerPromptHistory
+                {
+                    Id = Guid.NewGuid(),
+                    ManufacturerId = manufacturer.Id,
+                    Instructions = manufacturer.DefaultInstructions,
+                    CreatedDate = DateTime.UtcNow,
+                });
+            }
+
+            manufacturer.DefaultInstructions = newInstructions;
         }
 
         await _db.SaveChangesAsync(ct);
         return Ok(new ManufacturerDto(manufacturer.Id, manufacturer.Name, manufacturer.DefaultInstructions, manufacturer.CreatedDate));
+    }
+
+    /// <summary>Past default-prompt versions for one manufacturer, newest first.</summary>
+    [HttpGet("{id:guid}/prompt-history")]
+    public async Task<ActionResult<List<ManufacturerPromptHistoryDto>>> GetPromptHistory(Guid id, CancellationToken ct)
+    {
+        var exists = await _db.Manufacturers.AnyAsync(m => m.Id == id, ct);
+        if (!exists) return NotFound();
+
+        var history = await _db.ManufacturerPromptHistory
+            .Where(h => h.ManufacturerId == id)
+            .OrderByDescending(h => h.CreatedDate)
+            .Select(h => new ManufacturerPromptHistoryDto(h.Id, h.Instructions, h.CreatedDate))
+            .ToListAsync(ct);
+        return Ok(history);
     }
 
     [HttpDelete("{id:guid}")]
