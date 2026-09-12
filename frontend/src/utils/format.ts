@@ -21,6 +21,23 @@ export function timeLabel(iso: string): string {
   });
 }
 
+/** Full day + time, e.g. "Sep 12, 2026, 10:25:03 AM" — the exact moment of upload, not just the clock time. */
+export function dateTimeLabel(iso: string): string {
+  return new Date(iso).toLocaleString('en-US', {
+    year: 'numeric', month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+}
+
+/** Calendar-day key (local time) for grouping/filtering by date, e.g. "2026-09-12". */
+export function dateKey(iso: string): string {
+  const d = new Date(iso);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 export const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',

@@ -19,7 +19,7 @@ export function AppHeader({ onOpenSettings }: Props) {
         style={{ width: 28, height: 28, objectFit: 'contain', borderRadius: 7 }}
       />
       <span style={{ fontFamily: "'Source Serif 4',Georgia,serif", fontSize: 19, color: 'var(--ink)' }}>
-        Manufacturer Extraction
+        Sales & Commissions import
       </span>
       <span style={{ color: 'var(--muted)', fontSize: 13 }}>Report intake & processing</span>
 

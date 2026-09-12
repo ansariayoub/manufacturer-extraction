@@ -35,9 +35,22 @@ function downloadJson(fileName: string, data: unknown) {
 
 const preStyle: React.CSSProperties = {
   margin: 0, background: '#0f2537', color: '#cfe0ef', padding: 18, borderRadius: 12,
-  fontSize: 12.5, lineHeight: 1.6, overflow: 'auto', maxHeight: '56vh',
+  fontSize: 12.5, lineHeight: 1.6, overflow: 'auto', maxHeight: '100%',
+  // pre-wrap + break-word: a raw JSON blob with no embedded newlines used to render as one
+  // unbroken horizontal line the width of the whole payload — this wraps it like a normal
+  // pretty-printed document instead, regardless of whether the source string has real linebreaks.
+  whiteSpace: 'pre-wrap', wordBreak: 'break-word',
   fontFamily: 'ui-monospace,SFMono-Regular,Menlo,monospace',
 };
+
+/** Best-effort pretty-print: re-indents valid JSON, falls back to the raw string otherwise. */
+function prettyJson(raw: string): string {
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2);
+  } catch {
+    return raw;
+  }
+}
 
 export function DocumentViewerModal({ doc, initialTab, onClose }: Props) {
   const [tab, setTab] = useState<Tab>(initialTab);
@@ -70,7 +83,11 @@ export function DocumentViewerModal({ doc, initialTab, onClose }: Props) {
     >
       <div
         style={{
-          width: 'min(1320px,100%)', margin: 'auto', maxHeight: '100%', display: 'flex', flexDirection: 'column',
+          // A FIXED height (not just a max-height cap) so the frame stays the same size across
+          // every tab — it previously shrank to fit whichever tab's content was shortest (e.g.
+          // "Instructions") and grew again on "Canonical", visibly resizing the window on every
+          // click. min(...) still keeps it from overflowing a short viewport.
+          width: 'min(1320px,100%)', height: 'min(880px,92vh)', margin: 'auto', display: 'flex', flexDirection: 'column',
           background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 16,
           boxShadow: '0 24px 60px rgba(18,54,90,.22)', overflow: 'hidden',
         }}
@@ -109,7 +126,7 @@ export function DocumentViewerModal({ doc, initialTab, onClose }: Props) {
           </span>
         </div>
 
-        <div style={{ overflow: 'auto', padding: 22, background: 'var(--bg)' }}>
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 22, background: 'var(--bg)' }}>
           {tab === 'instructions' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -174,7 +191,7 @@ export function DocumentViewerModal({ doc, initialTab, onClose }: Props) {
                   Download JSON
                 </button>
               </div>
-              <pre style={preStyle}>{doc.rawExtractionJson}</pre>
+              <pre style={preStyle}>{prettyJson(doc.rawExtractionJson)}</pre>
             </div>
           )}
 

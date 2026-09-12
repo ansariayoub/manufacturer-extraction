@@ -1,5 +1,6 @@
+import { useMemo, useState } from 'react';
 import type { DocumentSummary } from '../types';
-import { fileExt, fileSizeLabel, money, STATUS_COLOR, STATUS_LABEL, timeLabel } from '../utils/format';
+import { dateKey, dateTimeLabel, fileExt, fileSizeLabel, money, STATUS_COLOR, STATUS_LABEL } from '../utils/format';
 
 interface Props {
   documents: DocumentSummary[];
@@ -11,15 +12,61 @@ interface Props {
 }
 
 export function DocumentQueueTable({ documents, loading = false, onOpen, onRemove, onReanalyze }: Props) {
+  const [manufacturerFilter, setManufacturerFilter] = useState('');
+  const [dateFilter, setDateFilter] = useState('');
+
+  const manufacturerOptions = useMemo(
+    () => Array.from(new Set(documents.map((d) => d.manufacturer).filter(Boolean))).sort(),
+    [documents]
+  );
+
+  const filtered = documents.filter((d) => {
+    if (manufacturerFilter && d.manufacturer !== manufacturerFilter) return false;
+    if (dateFilter && dateKey(d.uploadedAt) !== dateFilter) return false;
+    return true;
+  });
+
   return (
     <div className="card" style={{ padding: '6px 20px 10px' }}>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '12px 4px 8px', flexWrap: 'wrap' }}>
+        <span className="lbl">Filter</span>
+        <select
+          className="fld"
+          style={{ height: 34, fontSize: 13 }}
+          value={manufacturerFilter}
+          onChange={(e) => setManufacturerFilter(e.target.value)}
+        >
+          <option value="">All manufacturers</option>
+          {manufacturerOptions.map((m) => <option key={m} value={m}>{m}</option>)}
+        </select>
+        <input
+          type="date"
+          className="fld"
+          style={{ height: 34, fontSize: 13 }}
+          value={dateFilter}
+          onChange={(e) => setDateFilter(e.target.value)}
+        />
+        {(manufacturerFilter || dateFilter) && (
+          <button className="pill" style={{ fontSize: 12.5, padding: '5px 12px' }} onClick={() => { setManufacturerFilter(''); setDateFilter(''); }}>
+            Clear filters
+          </button>
+        )}
+        {(manufacturerFilter || dateFilter) && (
+          <span style={{ color: 'var(--muted)', fontSize: 12.5, marginLeft: 4 }}>
+            {filtered.length} of {documents.length} shown
+          </span>
+        )}
+      </div>
+
       <table>
         <thead>
           <tr>
-            <th style={{ width: '28%' }}>File</th>
-            <th style={{ width: '17%' }}>Pipeline</th>
-            <th style={{ width: '11%', textAlign: 'right' }}>Total net sales</th>
-            <th style={{ width: '11%', textAlign: 'right' }}>Total commissions</th>
+            <th style={{ width: '22%' }}>File</th>
+            <th style={{ width: '14%' }}>Manufacturer</th>
+            <th style={{ width: '11%' }}>Date</th>
+            <th style={{ width: '15%' }}>Pipeline</th>
+            <th style={{ width: '10%', textAlign: 'right' }}>Total net sales</th>
+            <th style={{ width: '10%', textAlign: 'right' }}>Total commissions</th>
             {/* Fixed px, not '1%' — table-layout: fixed takes declared widths literally, it no
                 longer shrinks this column to fit its three pill buttons the way auto layout did. */}
             <th style={{ width: 250, textAlign: 'right', whiteSpace: 'nowrap' }}>Inspect</th>
@@ -27,13 +74,13 @@ export function DocumentQueueTable({ documents, loading = false, onOpen, onRemov
           </tr>
         </thead>
         <tbody>
-          {documents.map((doc) => {
+          {filtered.map((doc) => {
             const isDone = doc.status === 'Done';
             const notDone = !isDone;
             const showBar = doc.status === 'Extracting' || doc.status === 'Mapping';
             const statusLabel = STATUS_LABEL[doc.status];
             const statusColor = STATUS_COLOR[doc.status];
-            const meta = `${fileSizeLabel(doc.fileSizeBytes)} · uploaded ${timeLabel(doc.uploadedAt)}`;
+            const meta = fileSizeLabel(doc.fileSizeBytes);
             const lineNote = doc.lineCount != null && doc.customerCount != null
               ? `${doc.lineCount} canonical lines · ${doc.customerCount} customers`
               : null;
@@ -77,41 +124,32 @@ export function DocumentQueueTable({ documents, loading = false, onOpen, onRemov
                         )}
                       </span>
                       <span style={{ color: 'var(--muted)', fontSize: 12 }}>{meta}</span>
-                      {doc.customInstructions && (
-                        // Shows exactly which rules this file was actually sent with — the panel
-                        // above only reflects what the NEXT upload will use.
-                        <span
-                          title={doc.customInstructions}
-                          style={{
-                            marginTop: 2, width: 'fit-content', maxWidth: '100%',
-                            padding: '2px 8px', borderRadius: 6, fontSize: 11.5,
-                            background: 'var(--blue-soft)', color: 'var(--blue-deep)',
-                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                          }}
-                        >
-                          ✦ {doc.customInstructions}
-                        </span>
-                      )}
                     </span>
                   </div>
                 </td>
+                <td style={{ fontSize: 13, color: 'var(--text)' }}>{doc.manufacturer || '—'}</td>
+                <td style={{ fontSize: 12.5, color: 'var(--muted)' }}>{dateTimeLabel(doc.uploadedAt)}</td>
                 <td>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: statusColor }}>
                       <span style={{ width: 7, height: 7, borderRadius: 999, background: statusColor }} />
                       <span>{doc.status === 'Failed' && doc.errorMessage ? doc.errorMessage : statusLabel}</span>
+                      {isDone && doc.hasWarnings && doc.errorMessage && (
+                        // Icon-only, matching the small warning glyph already used elsewhere — the
+                        // full explanation (which chunks fell short, by how much) only appears in
+                        // the tooltip on hover, instead of a permanently-visible red banner line.
+                        <span
+                          title={doc.errorMessage}
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                            width: 18, height: 18, borderRadius: 999, flex: 'none', cursor: 'help',
+                            color: '#b45309', background: '#fffbeb', border: '1px solid #fde68a', fontSize: 11,
+                          }}
+                        >
+                          ⚠
+                        </span>
+                      )}
                     </div>
-                    {isDone && doc.hasWarnings && doc.errorMessage && (
-                      // The full warning list (which chunks fell short, by how much) is in the
-                      // tooltip — the totals on this row are not safe to use as-is.
-                      <div title={doc.errorMessage} style={{
-                        display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5,
-                        color: '#b45309', background: '#fffbeb', border: '1px solid #fde68a',
-                        borderRadius: 6, padding: '3px 8px', width: 'fit-content', cursor: 'help',
-                      }}>
-                        ⚠ Incomplete extraction — hover for details
-                      </div>
-                    )}
                     {showBar && (
                       <div style={{ height: 5, borderRadius: 999, background: '#eaeff6', width: 150, overflow: 'hidden' }}>
                         <div style={{
@@ -186,6 +224,11 @@ export function DocumentQueueTable({ documents, loading = false, onOpen, onRemov
             </div>
           ))}
           <div style={{ color: 'var(--muted)', fontSize: 13 }}>Loading the queue…</div>
+        </div>
+      )}
+      {documents.length > 0 && filtered.length === 0 && (
+        <div style={{ padding: '40px 8px', textAlign: 'center', color: 'var(--muted)', fontSize: 13.5 }}>
+          No documents match the current filters.
         </div>
       )}
       {documents.length === 0 && !loading && (
