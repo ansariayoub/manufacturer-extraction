@@ -61,15 +61,18 @@ export function DocumentQueueTable({ documents, loading = false, onOpen, onRemov
       <table>
         <thead>
           <tr>
-            <th style={{ width: '22%' }}>File</th>
-            <th style={{ width: '14%' }}>Manufacturer</th>
-            <th style={{ width: '11%' }}>Date</th>
-            <th style={{ width: '15%' }}>Pipeline</th>
-            <th style={{ width: '10%', textAlign: 'right' }}>Total net sales</th>
-            <th style={{ width: '10%', textAlign: 'right' }}>Total commissions</th>
-            {/* Fixed px, not '1%' — table-layout: fixed takes declared widths literally, it no
-                longer shrinks this column to fit its three pill buttons the way auto layout did. */}
-            <th style={{ width: 250, textAlign: 'right', whiteSpace: 'nowrap' }}>Inspect</th>
+            <th style={{ width: '18%' }}>File</th>
+            <th style={{ width: '12%' }}>Manufacturer</th>
+            <th style={{ width: '10%' }}>Date</th>
+            <th style={{ width: '11%' }}>Pipeline</th>
+            <th style={{ width: '9%', textAlign: 'right' }}>Total net sales</th>
+            <th style={{ width: '9%', textAlign: 'right' }}>Total commissions</th>
+            {/* Fixed px, not '%' — table-layout: fixed takes declared widths literally, it no
+                longer shrinks this column to fit its (now up to four, since "Instructions" joined
+                the other three) pill buttons the way auto layout did. Too narrow here previously
+                made the row's real content overflow leftward into the Total commissions column
+                instead of wrapping, rendering as a stray digit floating in front of the buttons. */}
+            <th style={{ width: 360, textAlign: 'right', whiteSpace: 'nowrap' }}>Inspect</th>
             <th style={{ width: 48 }} />
           </tr>
         </thead>
@@ -161,7 +164,7 @@ export function DocumentQueueTable({ documents, loading = false, onOpen, onRemov
                     {isDone && lineNote && <span style={{ color: 'var(--muted)', fontSize: 12 }}>{lineNote}</span>}
                   </div>
                 </td>
-                <td style={{ textAlign: 'right', color: 'var(--ink)', fontVariantNumeric: 'tabular-nums', paddingTop: 15 }}>
+                <td style={{ textAlign: 'right', color: 'var(--ink)', fontVariantNumeric: 'tabular-nums', paddingTop: 15, overflow: 'hidden' }}>
                   {isDone ? money(headlineNet) : '—'}
                   {isDone && doc.isCumulative && (
                     <div style={{ color: 'var(--muted)', fontSize: 11.5, fontWeight: 400, marginTop: 3 }}>
@@ -169,7 +172,7 @@ export function DocumentQueueTable({ documents, loading = false, onOpen, onRemov
                     </div>
                   )}
                 </td>
-                <td style={{ textAlign: 'right', color: 'var(--ink)', fontVariantNumeric: 'tabular-nums', paddingTop: 15 }}>
+                <td style={{ textAlign: 'right', color: 'var(--ink)', fontVariantNumeric: 'tabular-nums', paddingTop: 15, whiteSpace: 'nowrap', overflow: 'hidden' }}>
                   {isDone ? money(headlineComm) : '—'}
                 </td>
                 <td style={{ paddingTop: 12 }}>
