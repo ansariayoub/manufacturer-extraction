@@ -29,7 +29,7 @@ export function InstructionsPanel({ instructions, onInstructionsChange }: Props)
         <h3 style={{ fontSize: 22 }}>Processing instructions</h3>
       </div>
       <div style={{ color: 'var(--muted)', fontSize: 13, marginTop: 4 }}>
-        Applied to every file you upload next. Most rules guide the canonical mapper and take
+        Applied to current uploaded files. Most rules guide the canonical mapper and take
         precedence over its default extraction rules; a rule that names a specific sheet (e.g.
         "only read the sheet named ...") also restricts which sheet gets read in the first place,
         for .xlsx/.xls files.
@@ -54,11 +54,6 @@ export function InstructionsPanel({ instructions, onInstructionsChange }: Props)
               {label}
             </button>
           ))}
-        </div>
-        <div style={{ color: 'var(--muted)', fontSize: 12.5 }}>
-          {instructions.trim()
-            ? 'Applied to files uploaded from now on. Files already in the queue keep the instructions they were sent with — use the ↻ button on a row to re-run it with these rules instead.'
-            : 'No custom instructions — the mapper runs on its default prompt.'}
         </div>
       </div>
     </div>

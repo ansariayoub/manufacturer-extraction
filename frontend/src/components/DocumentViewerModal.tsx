@@ -33,6 +33,64 @@ function downloadJson(fileName: string, data: unknown) {
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 }
 
+/** Quotes a CSV field only when it needs it (contains a comma, quote or newline). */
+function csvField(value: unknown): string {
+  const s = value === null || value === undefined ? '' : String(value);
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function downloadCsv(fileName: string, headers: string[], rows: (string | number)[][]) {
+  const lines = [headers, ...rows].map((row) => row.map(csvField).join(','));
+  // Leading BOM so Excel opens the accented/UTF-8 content correctly instead of guessing a codepage.
+  const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = fileName;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+interface SourceSheet {
+  name: string;
+  headers: string[];
+  rows: string[][];
+}
+
+/**
+ * Parses the raw extraction JSON's per-sheet markdown tables (produced directly by
+ * SpreadsheetExtractionService — see its `contents` array, each entry `{path, markdown}`) back
+ * into plain rows, so the "Input file" tab can render the actual workbook content as a real table
+ * instead of just linking out to the binary file.
+ */
+function parseSourceSheets(rawExtractionJson: string): SourceSheet[] {
+  try {
+    const parsed = JSON.parse(rawExtractionJson);
+    const contents: Array<{ path?: string; markdown?: string }> = parsed?.result?.contents ?? [];
+    return contents
+      .filter((c) => typeof c.markdown === 'string')
+      .map((c) => {
+        const lines = c.markdown!.split('\n');
+        let name = c.path ?? 'Sheet';
+        let headers: string[] = [];
+        let headerSeen = false;
+        const rows: string[][] = [];
+        for (const raw of lines) {
+          const line = raw.trim();
+          if (line.startsWith('# ')) { name = line.slice(2).trim(); continue; }
+          if (!line.startsWith('|')) continue;
+          const cells = line.slice(1, line.endsWith('|') ? -1 : undefined).split('|').map((v) => v.trim());
+          if (cells.every((v) => /^-*$/.test(v))) continue; // "| --- | --- |" separator row
+          if (!headerSeen) { headers = cells; headerSeen = true; continue; }
+          rows.push(cells);
+        }
+        return { name, headers, rows };
+      })
+      .filter((s) => s.headers.length > 0);
+  } catch {
+    return [];
+  }
+}
+
 const preStyle: React.CSSProperties = {
   margin: 0, background: '#0f2537', color: '#cfe0ef', padding: 18, borderRadius: 12,
   fontSize: 12.5, lineHeight: 1.6, overflow: 'auto', maxHeight: '100%',
@@ -71,6 +129,18 @@ export function DocumentViewerModal({ doc, initialTab, onClose }: Props) {
   const baseName = doc.fileName.replace(/\.[^.]+$/, '');
   const totalNet = doc.canonicalRecords.reduce((a, r) => a + r.netSales, 0);
   const totalComm = doc.canonicalRecords.reduce((a, r) => a + r.commission, 0);
+  const sourceSheets = isPdf ? [] : parseSourceSheets(doc.rawExtractionJson);
+
+  function downloadCanonicalCsv() {
+    downloadCsv(
+      `${baseName}.canonical.csv`,
+      ['Customer ID', 'Customer', 'Date', 'City', 'State', 'Product family', 'Part no', 'Qty', 'Net sales', 'Commission'],
+      doc.canonicalRecords.map((r) => [
+        r.customerId, r.customerName, r.date, r.city, r.state, r.productFamily, r.partNo,
+        r.quantity, r.netSales, r.commission,
+      ])
+    );
+  }
 
   function stop(e: MouseEvent) {
     e.stopPropagation();
@@ -146,29 +216,12 @@ export function DocumentViewerModal({ doc, initialTab, onClose }: Props) {
           )}
 
           {tab === 'source' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <div className="lbl">{isPdf ? 'Original PDF' : 'Original workbook'} — as uploaded</div>
-              <div className="card" style={{ padding: 20 }}>
-                <div style={{ fontFamily: "'Source Serif 4',Georgia,serif", fontSize: 20, color: 'var(--ink)' }}>
-                  {doc.manufacturer} — {doc.fileName}
-                </div>
-                <div style={{ color: 'var(--muted)', fontSize: 12.5, marginBottom: 12 }}>
-                  Period ending {monthLabel(doc.periodMonth)} {doc.periodYear}
-                </div>
-                {isPdf ? (
-                  <iframe
-                    title="Original document"
-                    src={doc.sourceUrl}
-                    style={{ width: '100%', height: '60vh', border: '1px solid var(--line)', borderRadius: 8 }}
-                  />
-                ) : (
-                  <div style={{ padding: '28px 0', textAlign: 'center', color: 'var(--muted)', fontSize: 13.5 }}>
-                    Excel workbooks can't be previewed inline — open the original to inspect it.
-                  </div>
-                )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div className="lbl">{isPdf ? 'Original PDF' : 'Original workbook'} — as uploaded</div>
                 <a
-                  className="pill pill-solid"
-                  style={{ display: 'inline-block', marginTop: 12, textDecoration: 'none' }}
+                  className="pill"
+                  style={{ marginLeft: 'auto', color: 'var(--blue)', textDecoration: 'none' }}
                   href={doc.sourceUrl}
                   target="_blank"
                   rel="noreferrer"
@@ -176,6 +229,59 @@ export function DocumentViewerModal({ doc, initialTab, onClose }: Props) {
                   Open original file
                 </a>
               </div>
+
+              {isPdf ? (
+                <div className="card" style={{ padding: 20 }}>
+                  <div style={{ fontFamily: "'Source Serif 4',Georgia,serif", fontSize: 20, color: 'var(--ink)' }}>
+                    {doc.manufacturer} — {doc.fileName}
+                  </div>
+                  <div style={{ color: 'var(--muted)', fontSize: 12.5, marginBottom: 12 }}>
+                    Period ending {monthLabel(doc.periodMonth)} {doc.periodYear}
+                  </div>
+                  <iframe
+                    title="Original document"
+                    src={doc.sourceUrl}
+                    style={{ width: '100%', height: '60vh', border: '1px solid var(--line)', borderRadius: 8 }}
+                  />
+                </div>
+              ) : sourceSheets.length > 0 ? (
+                // The workbook itself can't be embedded, but its content already went through
+                // SpreadsheetExtractionService as plain rows before any normalization or LLM
+                // mapping touched it — rendering those rows here shows the file's real content,
+                // sheet by sheet, the same way the Canonical tab's table view does.
+                sourceSheets.map((sheet, si) => (
+                  <div key={si} className="card" style={{ padding: '6px 20px 16px' }}>
+                    <div style={{ padding: '14px 0 4px', fontFamily: "'Source Serif 4',Georgia,serif", fontSize: 17, color: 'var(--ink)' }}>
+                      {sheet.name}
+                    </div>
+                    <div style={{ color: 'var(--muted)', fontSize: 12, marginBottom: 8 }}>
+                      {sheet.rows.length} row{sheet.rows.length === 1 ? '' : 's'}
+                    </div>
+                    <div style={{ overflowX: 'auto' }}>
+                      <table>
+                        <thead>
+                          <tr>
+                            {sheet.headers.map((h, i) => <th key={i}>{h || ` `}</th>)}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sheet.rows.map((row, ri) => (
+                            <tr key={ri}>
+                              {sheet.headers.map((_, ci) => (
+                                <td key={ci} style={{ fontSize: 13, padding: '9px 10px' }}>{row[ci] ?? ''}</td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="card" style={{ padding: '28px 20px', textAlign: 'center', color: 'var(--muted)', fontSize: 13.5 }}>
+                  This file's content couldn't be parsed into a table view — open the original to inspect it.
+                </div>
+              )}
             </div>
           )}
 
@@ -217,9 +323,9 @@ export function DocumentViewerModal({ doc, initialTab, onClose }: Props) {
                   <button
                     className="pill"
                     style={{ fontSize: 12.5, padding: '5px 12px', color: 'var(--blue)' }}
-                    onClick={() => downloadJson(`${baseName}.canonical.json`, doc.canonicalRecords)}
+                    onClick={downloadCanonicalCsv}
                   >
-                    Download
+                    Download CSV
                   </button>
                 </span>
               </div>
