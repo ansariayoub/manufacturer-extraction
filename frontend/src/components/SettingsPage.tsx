@@ -190,10 +190,7 @@ export function SettingsPage({ manufacturers, onCreate, onUpdate, onDelete, them
 
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr) minmax(0,1fr)', gap: 22, marginBottom: 22 }}>
         <div className="card" style={{ padding: 22 }}>
-          <h3 style={{ fontSize: 19, marginBottom: 4 }}>Appearance</h3>
-          <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 14 }}>
-            Applies to this browser only.
-          </div>
+          <h3 style={{ fontSize: 19, marginBottom: 14 }}>Appearance</h3>
           <div style={{ display: 'flex', gap: 8 }}>
             <button
               className={theme === 'light' ? 'pill pill-solid' : 'pill'}
