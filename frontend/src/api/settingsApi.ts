@@ -28,3 +28,24 @@ export async function setAiModel(deployment: string): Promise<AiModelSettings> {
   });
   return handle<AiModelSettings>(res);
 }
+
+export interface EmbeddingModelSettings {
+  current: string;
+  available: string[];
+}
+
+/** GET /api/settings/embedding-model — which Azure OpenAI embedding deployment is selected. */
+export async function getEmbeddingModel(): Promise<EmbeddingModelSettings> {
+  const res = await fetch(`${BASE_URL}/api/settings/embedding-model`);
+  return handle<EmbeddingModelSettings>(res);
+}
+
+/** PUT /api/settings/embedding-model — switches it. */
+export async function setEmbeddingModel(deployment: string): Promise<EmbeddingModelSettings> {
+  const res = await fetch(`${BASE_URL}/api/settings/embedding-model`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ deployment }),
+  });
+  return handle<EmbeddingModelSettings>(res);
+}

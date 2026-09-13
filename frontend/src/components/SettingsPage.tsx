@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Manufacturer, ManufacturerPromptHistoryEntry } from '../types';
 import type { Theme } from '../hooks/useTheme';
 import { listPromptHistory } from '../api/manufacturersApi';
-import { getAiModel, setAiModel } from '../api/settingsApi';
+import { getAiModel, setAiModel, getEmbeddingModel, setEmbeddingModel } from '../api/settingsApi';
 
 interface Props {
   manufacturers: Manufacturer[];
@@ -43,9 +43,15 @@ export function SettingsPage({ manufacturers, onCreate, onUpdate, onDelete, them
   const [aiModel, setAiModelState] = useState<{ current: string; available: string[] } | null>(null);
   const [aiModelBusy, setAiModelBusy] = useState(false);
 
+  const [embeddingModel, setEmbeddingModelState] = useState<{ current: string; available: string[] } | null>(null);
+  const [embeddingModelBusy, setEmbeddingModelBusy] = useState(false);
+
   useEffect(() => {
     getAiModel().then(setAiModelState).catch((err) => {
       console.error('Failed to load AI model settings', err);
+    });
+    getEmbeddingModel().then(setEmbeddingModelState).catch((err) => {
+      console.error('Failed to load embedding model settings', err);
     });
   }, []);
 
@@ -59,6 +65,19 @@ export function SettingsPage({ manufacturers, onCreate, onUpdate, onDelete, them
       setError(err instanceof Error ? err.message : 'Failed to switch AI model.');
     } finally {
       setAiModelBusy(false);
+    }
+  }
+
+  async function handleEmbeddingModelChange(deployment: string) {
+    if (embeddingModelBusy || deployment === embeddingModel?.current) return;
+    setEmbeddingModelBusy(true);
+    setError(null);
+    try {
+      setEmbeddingModelState(await setEmbeddingModel(deployment));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to switch embedding model.');
+    } finally {
+      setEmbeddingModelBusy(false);
     }
   }
 
@@ -169,7 +188,7 @@ export function SettingsPage({ manufacturers, onCreate, onUpdate, onDelete, them
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 22, marginBottom: 22 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr) minmax(0,1fr)', gap: 22, marginBottom: 22 }}>
         <div className="card" style={{ padding: 22 }}>
           <h3 style={{ fontSize: 19, marginBottom: 4 }}>Appearance</h3>
           <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 14 }}>
@@ -208,6 +227,30 @@ export function SettingsPage({ manufacturers, onCreate, onUpdate, onDelete, them
                   title={deployment === aiModel.current ? 'Currently active' : `Switch to ${deployment}`}
                 >
                   {deployment === aiModel.current ? '✓ ' : ''}{deployment}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div style={{ color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
+          )}
+        </div>
+
+        <div className="card" style={{ padding: 22 }}>
+          <h3 style={{ fontSize: 19, marginBottom: 4 }}>Embedding model</h3>
+          <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 14 }}>
+            Which Azure OpenAI embedding deployment is used, once a feature that needs one is built.
+          </div>
+          {embeddingModel ? (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {embeddingModel.available.map((deployment) => (
+                <button
+                  key={deployment}
+                  className={deployment === embeddingModel.current ? 'pill pill-solid' : 'pill'}
+                  disabled={embeddingModelBusy}
+                  onClick={() => handleEmbeddingModelChange(deployment)}
+                  title={deployment === embeddingModel.current ? 'Currently active' : `Switch to ${deployment}`}
+                >
+                  {deployment === embeddingModel.current ? '✓ ' : ''}{deployment}
                 </button>
               ))}
             </div>

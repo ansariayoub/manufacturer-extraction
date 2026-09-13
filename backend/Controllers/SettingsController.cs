@@ -13,8 +13,13 @@ namespace ManufacturerExtraction.Api.Controllers;
 public class SettingsController : ControllerBase
 {
     private readonly AiModelSettingsService _aiModel;
+    private readonly EmbeddingModelSettingsService _embeddingModel;
 
-    public SettingsController(AiModelSettingsService aiModel) => _aiModel = aiModel;
+    public SettingsController(AiModelSettingsService aiModel, EmbeddingModelSettingsService embeddingModel)
+    {
+        _aiModel = aiModel;
+        _embeddingModel = embeddingModel;
+    }
 
     [HttpGet("ai-model")]
     public ActionResult<AiModelSettingsDto> GetAiModel() =>
@@ -32,5 +37,23 @@ public class SettingsController : ControllerBase
 
         await _aiModel.SetDeploymentAsync(deployment, ct);
         return Ok(new AiModelSettingsDto(_aiModel.CurrentDeployment, _aiModel.AvailableDeployments));
+    }
+
+    [HttpGet("embedding-model")]
+    public ActionResult<EmbeddingModelSettingsDto> GetEmbeddingModel() =>
+        Ok(new EmbeddingModelSettingsDto(_embeddingModel.CurrentDeployment, _embeddingModel.AvailableDeployments));
+
+    [HttpPut("embedding-model")]
+    public async Task<ActionResult<EmbeddingModelSettingsDto>> SetEmbeddingModel(UpdateEmbeddingModelRequest request, CancellationToken ct)
+    {
+        var deployment = request.Deployment?.Trim();
+        if (string.IsNullOrWhiteSpace(deployment))
+            return BadRequest("Deployment name is required.");
+
+        if (!_embeddingModel.AvailableDeployments.Contains(deployment, StringComparer.OrdinalIgnoreCase))
+            return BadRequest($"'{deployment}' is not one of the available deployments: {string.Join(", ", _embeddingModel.AvailableDeployments)}.");
+
+        await _embeddingModel.SetDeploymentAsync(deployment, ct);
+        return Ok(new EmbeddingModelSettingsDto(_embeddingModel.CurrentDeployment, _embeddingModel.AvailableDeployments));
     }
 }
