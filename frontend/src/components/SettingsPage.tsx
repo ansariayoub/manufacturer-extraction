@@ -189,9 +189,9 @@ export function SettingsPage({ manufacturers, onCreate, onUpdate, onDelete, them
       )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr) minmax(0,1fr)', gap: 22, marginBottom: 22 }}>
-        <div className="card" style={{ padding: 22 }}>
+        <div className="card" style={{ padding: 22, display: 'flex', flexDirection: 'column' }}>
           <h3 style={{ fontSize: 19, marginBottom: 4 }}>Appearance</h3>
-          <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 14 }}>
+          <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 14, flex: 1 }}>
             Applies to this browser only.
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -210,9 +210,9 @@ export function SettingsPage({ manufacturers, onCreate, onUpdate, onDelete, them
           </div>
         </div>
 
-        <div className="card" style={{ padding: 22 }}>
+        <div className="card" style={{ padding: 22, display: 'flex', flexDirection: 'column' }}>
           <h3 style={{ fontSize: 19, marginBottom: 4 }}>AI model</h3>
-          <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 14 }}>
+          <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 14, flex: 1 }}>
             Which Azure OpenAI deployment the canonical mapper calls. Applies to every document
             processed from now on, app-wide.
           </div>
@@ -235,9 +235,9 @@ export function SettingsPage({ manufacturers, onCreate, onUpdate, onDelete, them
           )}
         </div>
 
-        <div className="card" style={{ padding: 22 }}>
+        <div className="card" style={{ padding: 22, display: 'flex', flexDirection: 'column' }}>
           <h3 style={{ fontSize: 19, marginBottom: 4 }}>Embedding model</h3>
-          <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 14 }}>
+          <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 14, flex: 1 }}>
             Which Azure OpenAI embedding deployment is used, once a feature that needs one is built.
           </div>
           {embeddingModel ? (
