@@ -12,6 +12,7 @@ public class AppDbContext : DbContext
     public DbSet<AnalyticsExtraction> AnalyticsExtractions => Set<AnalyticsExtraction>();
     public DbSet<Manufacturer> Manufacturers => Set<Manufacturer>();
     public DbSet<ManufacturerPromptHistory> ManufacturerPromptHistory => Set<ManufacturerPromptHistory>();
+    public DbSet<AppSetting> AppSettings => Set<AppSetting>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -70,6 +71,12 @@ public class AppDbContext : DbContext
                   .WithMany()
                   .HasForeignKey(h => h.ManufacturerId)
                   .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AppSetting>(entity =>
+        {
+            entity.HasKey(s => s.Key);
+            entity.Property(s => s.Key).HasMaxLength(100);
         });
     }
 }

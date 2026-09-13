@@ -49,6 +49,8 @@ builder.Services.AddSingleton<IDocumentProcessingQueue, DocumentProcessingQueue>
 // Shared across every document being processed, not per document — see OpenAiConcurrencyLimiter
 // for why AnalyticsTransformationService's own local semaphore (it is AddScoped) wasn't enough.
 builder.Services.AddSingleton<OpenAiConcurrencyLimiter>();
+// Settings-page-controlled choice of Azure OpenAI deployment — see AiModelSettingsService.
+builder.Services.AddSingleton<AiModelSettingsService>();
 builder.Services.AddHostedService<DocumentProcessingWorker>();
 
 var app = builder.Build();

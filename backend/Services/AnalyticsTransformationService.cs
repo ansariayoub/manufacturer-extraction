@@ -42,7 +42,8 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
     private readonly OpenAiConcurrencyLimiter _limiter;
 
     public AnalyticsTransformationService(
-        IConfiguration config, ILogger<AnalyticsTransformationService> logger, OpenAiConcurrencyLimiter limiter)
+        IConfiguration config, ILogger<AnalyticsTransformationService> logger, OpenAiConcurrencyLimiter limiter,
+        AiModelSettingsService aiModelSettings)
     {
         _logger = logger;
         _limiter = limiter;
@@ -51,8 +52,9 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
             ?? throw new InvalidOperationException("Azure OpenAI endpoint missing");
         var apiKey = config["AzureOpenAI:ApiKey"]
             ?? throw new InvalidOperationException("Azure OpenAI API key missing");
-        var deployment = config["AzureOpenAI:DeploymentName"]
-            ?? throw new InvalidOperationException("Azure OpenAI deployment name missing");
+        // Read from the Settings-page-controlled service, not fixed at startup from
+        // appsettings.json/App Service config — see AiModelSettingsService for why.
+        var deployment = aiModelSettings.CurrentDeployment;
 
         var clientOptions = new AzureOpenAIClientOptions
         {

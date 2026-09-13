@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Manufacturer, ManufacturerPromptHistoryEntry } from '../types';
 import type { Theme } from '../hooks/useTheme';
 import { listPromptHistory } from '../api/manufacturersApi';
+import { getAiModel, setAiModel } from '../api/settingsApi';
 
 interface Props {
   manufacturers: Manufacturer[];
@@ -38,6 +39,28 @@ export function SettingsPage({ manufacturers, onCreate, onUpdate, onDelete, them
   const [historyOpenId, setHistoryOpenId] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyById, setHistoryById] = useState<Record<string, ManufacturerPromptHistoryEntry[]>>({});
+
+  const [aiModel, setAiModelState] = useState<{ current: string; available: string[] } | null>(null);
+  const [aiModelBusy, setAiModelBusy] = useState(false);
+
+  useEffect(() => {
+    getAiModel().then(setAiModelState).catch((err) => {
+      console.error('Failed to load AI model settings', err);
+    });
+  }, []);
+
+  async function handleAiModelChange(deployment: string) {
+    if (aiModelBusy || deployment === aiModel?.current) return;
+    setAiModelBusy(true);
+    setError(null);
+    try {
+      setAiModelState(await setAiModel(deployment));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to switch AI model.');
+    } finally {
+      setAiModelBusy(false);
+    }
+  }
 
   async function handleCreate() {
     const name = newName.trim();
@@ -146,24 +169,51 @@ export function SettingsPage({ manufacturers, onCreate, onUpdate, onDelete, them
         </div>
       )}
 
-      <div className="card" style={{ padding: 22, marginBottom: 22 }}>
-        <h3 style={{ fontSize: 19, marginBottom: 4 }}>Appearance</h3>
-        <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 14 }}>
-          Applies to this browser only.
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 22, marginBottom: 22 }}>
+        <div className="card" style={{ padding: 22 }}>
+          <h3 style={{ fontSize: 19, marginBottom: 4 }}>Appearance</h3>
+          <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 14 }}>
+            Applies to this browser only.
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              className={theme === 'light' ? 'pill pill-solid' : 'pill'}
+              onClick={() => onThemeChange('light')}
+            >
+              ☀ Light
+            </button>
+            <button
+              className={theme === 'dark' ? 'pill pill-solid' : 'pill'}
+              onClick={() => onThemeChange('dark')}
+            >
+              ☾ Dark
+            </button>
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button
-            className={theme === 'light' ? 'pill pill-solid' : 'pill'}
-            onClick={() => onThemeChange('light')}
-          >
-            ☀ Light
-          </button>
-          <button
-            className={theme === 'dark' ? 'pill pill-solid' : 'pill'}
-            onClick={() => onThemeChange('dark')}
-          >
-            ☾ Dark
-          </button>
+
+        <div className="card" style={{ padding: 22 }}>
+          <h3 style={{ fontSize: 19, marginBottom: 4 }}>AI model</h3>
+          <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 14 }}>
+            Which Azure OpenAI deployment the canonical mapper calls. Applies to every document
+            processed from now on, app-wide.
+          </div>
+          {aiModel ? (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {aiModel.available.map((deployment) => (
+                <button
+                  key={deployment}
+                  className={deployment === aiModel.current ? 'pill pill-solid' : 'pill'}
+                  disabled={aiModelBusy}
+                  onClick={() => handleAiModelChange(deployment)}
+                  title={deployment === aiModel.current ? 'Currently active' : `Switch to ${deployment}`}
+                >
+                  {deployment === aiModel.current ? '✓ ' : ''}{deployment}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div style={{ color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
+          )}
         </div>
       </div>
 
