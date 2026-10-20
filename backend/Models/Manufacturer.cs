@@ -14,6 +14,11 @@ namespace ManufacturerExtraction.Api.Models;
 public class Manufacturer
 {
     public Guid Id { get; set; }
+
+    /// <summary>Each client keeps its own manufacturer list, so two clients can both have a "Rheem".</summary>
+    public Guid ClientId { get; set; }
+    public Client? Client { get; set; }
+
     public string Name { get; set; } = string.Empty;
     public string? DefaultInstructions { get; set; }
     public DateTime CreatedDate { get; set; }

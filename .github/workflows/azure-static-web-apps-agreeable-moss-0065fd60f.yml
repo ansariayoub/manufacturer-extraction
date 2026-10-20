@@ -28,6 +28,10 @@ jobs:
           # anyone else visiting the deployed site gets a frontend silently calling their own,
           # nonexistent localhost backend, with every request failing.
           VITE_API_BASE_URL: https://manufacturer-extraction-api-b6ghe4amfxa9eebk.germanywestcentral-01.azurewebsites.net
+          # Microsoft sign-in (Entra ID) — repository *variables* (Settings > Secrets and variables >
+          # Actions > Variables). While they are unset the app builds without sign-in, as before.
+          VITE_AZURE_TENANT_ID: ${{ vars.VITE_AZURE_TENANT_ID }}
+          VITE_AZURE_CLIENT_ID: ${{ vars.VITE_AZURE_CLIENT_ID }}
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_AGREEABLE_MOSS_0065FD60F }}
           repo_token: ${{ secrets.GITHUB_TOKEN }} # Used for Github integrations (i.e. PR comments)

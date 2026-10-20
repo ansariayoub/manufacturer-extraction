@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using ManufacturerExtraction.Api.Data;
 using ManufacturerExtraction.Api.Dtos;
 using ManufacturerExtraction.Api.Models;
+using ManufacturerExtraction.Api.Services.Auth;
 
 namespace ManufacturerExtraction.Api.Controllers;
 
@@ -11,19 +12,31 @@ namespace ManufacturerExtraction.Api.Controllers;
 /// hardcoded frontend array — adding a manufacturer not on it meant a code change and a deploy.
 /// This makes the list (and each manufacturer's default processing-instructions template) editable
 /// data instead, so an operator can add one the moment a new manufacturer's reports show up.
+///
+/// Every client keeps its own list: a caller only ever sees, creates, edits and deletes the
+/// manufacturers of their own client.
 /// </summary>
 [ApiController]
 [Route("api/manufacturers")]
 public class ManufacturersController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly CurrentUserAccessor _currentUser;
 
-    public ManufacturersController(AppDbContext db) => _db = db;
+    public ManufacturersController(AppDbContext db, CurrentUserAccessor currentUser)
+    {
+        _db = db;
+        _currentUser = currentUser;
+    }
+
+    private Guid ClientId => _currentUser.Current.ClientId;
+
+    private IQueryable<Manufacturer> Mine => _db.Manufacturers.Where(m => m.ClientId == ClientId);
 
     [HttpGet]
     public async Task<ActionResult<List<ManufacturerDto>>> List(CancellationToken ct)
     {
-        var manufacturers = await _db.Manufacturers
+        var manufacturers = await Mine
             .OrderBy(m => m.Name)
             .Select(m => new ManufacturerDto(m.Id, m.Name, m.DefaultInstructions, m.CreatedDate))
             .ToListAsync(ct);
@@ -37,13 +50,14 @@ public class ManufacturersController : ControllerBase
         if (string.IsNullOrWhiteSpace(name))
             return BadRequest("Manufacturer name is required.");
 
-        var exists = await _db.Manufacturers.AnyAsync(m => m.Name.ToLower() == name.ToLower(), ct);
+        var exists = await Mine.AnyAsync(m => m.Name.ToLower() == name.ToLower(), ct);
         if (exists)
             return Conflict($"A manufacturer named \"{name}\" already exists.");
 
         var manufacturer = new Manufacturer
         {
             Id = Guid.NewGuid(),
+            ClientId = ClientId,
             Name = name,
             DefaultInstructions = string.IsNullOrWhiteSpace(request.DefaultInstructions) ? null : request.DefaultInstructions.Trim(),
             CreatedDate = DateTime.UtcNow,
@@ -58,7 +72,7 @@ public class ManufacturersController : ControllerBase
     [HttpPut("{id:guid}")]
     public async Task<ActionResult<ManufacturerDto>> Update(Guid id, UpdateManufacturerRequest request, CancellationToken ct)
     {
-        var manufacturer = await _db.Manufacturers.FindAsync(new object?[] { id }, ct);
+        var manufacturer = await Mine.FirstOrDefaultAsync(m => m.Id == id, ct);
         if (manufacturer is null) return NotFound();
 
         if (request.Name is not null)
@@ -67,7 +81,7 @@ public class ManufacturersController : ControllerBase
             if (string.IsNullOrWhiteSpace(name))
                 return BadRequest("Manufacturer name cannot be blank.");
 
-            var duplicate = await _db.Manufacturers.AnyAsync(m => m.Id != id && m.Name.ToLower() == name.ToLower(), ct);
+            var duplicate = await Mine.AnyAsync(m => m.Id != id && m.Name.ToLower() == name.ToLower(), ct);
             if (duplicate)
                 return Conflict($"A manufacturer named \"{name}\" already exists.");
 
@@ -109,7 +123,7 @@ public class ManufacturersController : ControllerBase
     [HttpGet("{id:guid}/prompt-history")]
     public async Task<ActionResult<List<ManufacturerPromptHistoryDto>>> GetPromptHistory(Guid id, CancellationToken ct)
     {
-        var exists = await _db.Manufacturers.AnyAsync(m => m.Id == id, ct);
+        var exists = await Mine.AnyAsync(m => m.Id == id, ct);
         if (!exists) return NotFound();
 
         var history = await _db.ManufacturerPromptHistory
@@ -123,7 +137,7 @@ public class ManufacturersController : ControllerBase
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
     {
-        var manufacturer = await _db.Manufacturers.FindAsync(new object?[] { id }, ct);
+        var manufacturer = await Mine.FirstOrDefaultAsync(m => m.Id == id, ct);
         if (manufacturer is null) return NotFound();
 
         // Deliberately NOT blocked by existing documents referencing this name: Document.Manufacturer

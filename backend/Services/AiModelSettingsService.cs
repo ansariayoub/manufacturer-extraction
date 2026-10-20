@@ -9,7 +9,7 @@ namespace ManufacturerExtraction.Api.Services;
 /// Settings page instead of being fixed at deploy time in appsettings.json/App Service config.
 ///
 /// A newer deployment can turn out cheaper or faster on the same mapping task (the immediate case:
-/// "gpt-5.6-luna" was added alongside "gpt-5.2" because it appears to use noticeably fewer tokens
+/// "gpt-6-luna" was added alongside "gpt-5.2" because it appears to use noticeably fewer tokens
 /// for the same job) without anyone needing code access to try it — an operator flips it in
 /// Settings, the very next document processed picks it up.
 ///
@@ -55,7 +55,12 @@ public class AiModelSettingsService
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var saved = db.AppSettings.AsNoTracking().FirstOrDefault(s => s.Key == SettingKey)?.Value;
-            if (!string.IsNullOrWhiteSpace(saved)) _currentDeployment = saved;
+            // A saved choice is only honoured while it is still on the offered list: a deployment
+            // that was deleted in Azure (e.g. the retired gpt-5.6-luna) would otherwise stay selected
+            // forever and make every document fail against a model that no longer exists.
+            if (!string.IsNullOrWhiteSpace(saved)
+                && AvailableDeployments.Contains(saved, StringComparer.OrdinalIgnoreCase))
+                _currentDeployment = saved;
         }
         catch
         {

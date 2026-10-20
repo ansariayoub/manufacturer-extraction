@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { DocumentSummary } from '../types';
-import { dateKey, dateTimeLabel, fileExt, fileSizeLabel, money, STATUS_COLOR, STATUS_LABEL } from '../utils/format';
+import { dateTimeLabel, fileExt, fileSizeLabel, money, monthLabel, STATUS_COLOR, STATUS_LABEL } from '../utils/format';
 
 interface Props {
   documents: DocumentSummary[];
@@ -13,7 +13,11 @@ interface Props {
 
 export function DocumentQueueTable({ documents, loading = false, onOpen, onRemove, onReanalyze }: Props) {
   const [manufacturerFilter, setManufacturerFilter] = useState('');
-  const [dateFilter, setDateFilter] = useState('');
+  // "YYYY-MM" bounds (the value format of <input type="month">). The filter works on the period the
+  // operator picked when uploading (month + year), not on the exact upload day, and either bound
+  // can be left empty for an open-ended range.
+  const [fromMonth, setFromMonth] = useState('');
+  const [toMonth, setToMonth] = useState('');
 
   const manufacturerOptions = useMemo(
     () => Array.from(new Set(documents.map((d) => d.manufacturer).filter(Boolean))).sort(),
@@ -22,9 +26,12 @@ export function DocumentQueueTable({ documents, loading = false, onOpen, onRemov
 
   const filtered = documents.filter((d) => {
     if (manufacturerFilter && d.manufacturer !== manufacturerFilter) return false;
-    if (dateFilter && dateKey(d.uploadedAt) !== dateFilter) return false;
+    const period = `${d.periodYear}-${d.periodMonth.padStart(2, '0')}`;
+    if (fromMonth && period < fromMonth) return false;
+    if (toMonth && period > toMonth) return false;
     return true;
   });
+  const anyFilter = Boolean(manufacturerFilter || fromMonth || toMonth);
 
   return (
     <div className="card" style={{ padding: '6px 20px 10px' }}>
@@ -39,19 +46,34 @@ export function DocumentQueueTable({ documents, loading = false, onOpen, onRemov
           <option value="">All manufacturers</option>
           {manufacturerOptions.map((m) => <option key={m} value={m}>{m}</option>)}
         </select>
-        <input
-          type="date"
-          className="fld"
-          style={{ height: 34, fontSize: 13 }}
-          value={dateFilter}
-          onChange={(e) => setDateFilter(e.target.value)}
-        />
-        {(manufacturerFilter || dateFilter) && (
-          <button className="pill" style={{ fontSize: 12.5, padding: '5px 12px' }} onClick={() => { setManufacturerFilter(''); setDateFilter(''); }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--muted)' }}>
+          From
+          <input
+            type="month"
+            className="fld"
+            style={{ height: 34, fontSize: 13 }}
+            value={fromMonth}
+            max={toMonth || undefined}
+            onChange={(e) => setFromMonth(e.target.value)}
+          />
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--muted)' }}>
+          To
+          <input
+            type="month"
+            className="fld"
+            style={{ height: 34, fontSize: 13 }}
+            value={toMonth}
+            min={fromMonth || undefined}
+            onChange={(e) => setToMonth(e.target.value)}
+          />
+        </label>
+        {anyFilter && (
+          <button className="pill" style={{ fontSize: 12.5, padding: '5px 12px' }} onClick={() => { setManufacturerFilter(''); setFromMonth(''); setToMonth(''); }}>
             Clear filters
           </button>
         )}
-        {(manufacturerFilter || dateFilter) && (
+        {anyFilter && (
           <span style={{ color: 'var(--muted)', fontSize: 12.5, marginLeft: 4 }}>
             {filtered.length} of {documents.length} shown
           </span>
@@ -61,12 +83,13 @@ export function DocumentQueueTable({ documents, loading = false, onOpen, onRemov
       <table>
         <thead>
           <tr>
-            <th style={{ width: '18%' }}>File</th>
-            <th style={{ width: '12%' }}>Manufacturer</th>
+            <th style={{ width: '16%' }}>File</th>
+            <th style={{ width: '9%' }}>Client</th>
+            <th style={{ width: '10%' }}>Manufacturer</th>
             <th style={{ width: '10%' }}>Date</th>
             <th style={{ width: '11%' }}>Pipeline</th>
-            <th style={{ width: '9%', textAlign: 'right' }}>Total net sales</th>
-            <th style={{ width: '9%', textAlign: 'right' }}>Total commissions</th>
+            <th style={{ width: '8%', textAlign: 'right' }}>Total net sales</th>
+            <th style={{ width: '8%', textAlign: 'right' }}>Total commissions</th>
             {/* Fixed px, not '%' — table-layout: fixed takes declared widths literally, it no
                 longer shrinks this column to fit its (now up to four, since "Instructions" joined
                 the other three) pill buttons the way auto layout did. Too narrow here previously
@@ -130,8 +153,12 @@ export function DocumentQueueTable({ documents, loading = false, onOpen, onRemov
                     </span>
                   </div>
                 </td>
+                <td style={{ fontSize: 13, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis' }} title={doc.clientName}>{doc.clientName || '—'}</td>
                 <td style={{ fontSize: 13, color: 'var(--text)' }}>{doc.manufacturer || '—'}</td>
-                <td style={{ fontSize: 12.5, color: 'var(--muted)' }}>{dateTimeLabel(doc.uploadedAt)}</td>
+                <td style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+                  <div style={{ color: 'var(--text)', fontSize: 13 }}>{monthLabel(doc.periodMonth)} {doc.periodYear}</div>
+                  <div style={{ fontSize: 11.5 }}>Uploaded {dateTimeLabel(doc.uploadedAt)}</div>
+                </td>
                 <td>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: statusColor }}>

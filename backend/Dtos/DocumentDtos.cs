@@ -1,4 +1,3 @@
-using System.Text.Json;
 using ManufacturerExtraction.Api.Models;
 
 namespace ManufacturerExtraction.Api.Dtos;
@@ -9,7 +8,8 @@ public record DocumentSummaryDto(
     string Status, double ProgressPct, string? ErrorMessage, bool HasWarnings,
     decimal? TotalNetSales, decimal? TotalCommission,
     int? LineCount, int? CustomerCount, string? CustomInstructions,
-    bool IsCumulative, decimal? MonthlyNetSales, decimal? MonthlyCommission, int? MonthlyLineCount
+    bool IsCumulative, decimal? MonthlyNetSales, decimal? MonthlyCommission, int? MonthlyLineCount,
+    string ClientName
 );
 
 /// <summary>
@@ -21,6 +21,11 @@ public record DocumentStatusDto(
     Guid Id, string Status, double ProgressPct, string? ErrorMessage, bool HasWarnings
 );
 
+/// <summary>
+/// Header-level view of one document, opened instantly by the viewer. The heavy content (the raw
+/// extraction and the canonical lines) is NOT part of it any more: each viewer tab fetches only its
+/// own slice, one page at a time — see DocumentContentController.
+/// </summary>
 public record DocumentDetailDto(
     Guid Id, string FileName, long FileSizeBytes, DateTime UploadedAt,
     string Manufacturer, string PeriodMonth, string PeriodYear,
@@ -28,7 +33,8 @@ public record DocumentDetailDto(
     decimal? TotalNetSales, decimal? TotalCommission,
     int? LineCount, int? CustomerCount, string? CustomInstructions,
     bool IsCumulative, decimal? MonthlyNetSales, decimal? MonthlyCommission, int? MonthlyLineCount,
-    string? RawExtractionJson, List<AnalyticsTransaction> CanonicalRecords, string? SourceUrl
+    string ClientName,
+    string? SourceUrl
 );
 
 public record ReanalyzeRequest(string? CustomInstructions);
@@ -42,7 +48,7 @@ public static class DocumentMappingExtensions
     /// every poll tick — was what made the queue take many seconds to appear.
     /// The aggregates are computed once, at the end of processing, in DocumentProcessingService.
     /// </summary>
-    public static DocumentSummaryDto ToSummaryDto(this Document d) =>
+    public static DocumentSummaryDto ToSummaryDto(this Document d, string clientName) =>
         new(d.Id, d.OriginalFileName, d.FileSizeBytes, d.UploadDate,
             d.Manufacturer, d.PeriodMonth, d.PeriodYear,
             d.ProcessingStatus.ToString(), d.ProgressPct, d.ErrorMessage, d.HasWarnings,
@@ -50,35 +56,35 @@ public static class DocumentMappingExtensions
             d.LineCount, d.CustomerCount, d.CustomInstructions,
             // The month's own figures are derived at read time, not stored — see
             // CumulativePeriodService.DeriveMonthly. Callers that need them fill them in.
-            d.IsCumulative, null, null, null);
+            d.IsCumulative, null, null, null,
+            clientName);
 
-    /// <summary>
-    /// Detail view for a single document — here deserializing the canonical JSON is fine and
-    /// expected, because it only happens when the user actually opens the viewer for one file.
-    /// </summary>
-    public static DocumentDetailDto ToDetailDto(this Document d, string? sourceUrl)
+    public static DocumentDetailDto ToDetailDto(this Document d, string clientName, string? sourceUrl)
     {
-        var summary = d.ToSummaryDto();
-
-        List<AnalyticsTransaction> records = new();
-        if (d.AnalyticsExtraction is not null)
-        {
-            var report = JsonSerializer.Deserialize<AnalyticsReport>(
-                d.AnalyticsExtraction.AnalyticsJson,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-            // For a cumulative report the month's own lines are the ones worth looking at, so the
-            // viewer shows those when they exist and falls back to the raw cumulative lines.
-            records = report?.MonthlySales ?? report?.Sales ?? new();
-        }
-
+        var s = d.ToSummaryDto(clientName);
         return new DocumentDetailDto(
-            summary.Id, summary.FileName, summary.FileSizeBytes, summary.UploadedAt,
-            summary.Manufacturer, summary.PeriodMonth, summary.PeriodYear,
-            summary.Status, summary.ProgressPct, summary.ErrorMessage, summary.HasWarnings,
-            summary.TotalNetSales, summary.TotalCommission,
-            summary.LineCount, summary.CustomerCount, summary.CustomInstructions,
-            summary.IsCumulative, summary.MonthlyNetSales, summary.MonthlyCommission, summary.MonthlyLineCount,
-            d.RawExtraction?.RawJson, records, sourceUrl);
+            s.Id, s.FileName, s.FileSizeBytes, s.UploadedAt,
+            s.Manufacturer, s.PeriodMonth, s.PeriodYear,
+            s.Status, s.ProgressPct, s.ErrorMessage, s.HasWarnings,
+            s.TotalNetSales, s.TotalCommission,
+            s.LineCount, s.CustomerCount, s.CustomInstructions,
+            s.IsCumulative, s.MonthlyNetSales, s.MonthlyCommission, s.MonthlyLineCount,
+            s.ClientName, sourceUrl);
     }
 }
+
+// --- Paged viewer content ------------------------------------------------------------------
+
+public record CanonicalPageDto(
+    List<AnalyticsTransaction> Records, int Page, int PageSize, int TotalRecords,
+    decimal TotalNetSales, decimal TotalCommission);
+
+/// <summary>One slice of the pretty-printed raw extraction, cut by characters so a payload that is
+/// a single enormous line still pages.</summary>
+public record ExtractedPageDto(string Text, int Page, int PageCount, int TotalChars);
+
+public record SourceSheetInfoDto(string Name, int RowCount);
+
+public record SourcePageDto(
+    List<SourceSheetInfoDto> Sheets, int SheetIndex, List<string> Headers, List<List<string>> Rows,
+    int Page, int PageSize, int TotalRows);

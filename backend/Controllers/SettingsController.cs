@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using ManufacturerExtraction.Api.Dtos;
 using ManufacturerExtraction.Api.Services;
+using ManufacturerExtraction.Api.Services.Auth;
 
 namespace ManufacturerExtraction.Api.Controllers;
 
@@ -14,12 +15,19 @@ public class SettingsController : ControllerBase
 {
     private readonly AiModelSettingsService _aiModel;
     private readonly EmbeddingModelSettingsService _embeddingModel;
+    private readonly CurrentUserAccessor _currentUser;
 
-    public SettingsController(AiModelSettingsService aiModel, EmbeddingModelSettingsService embeddingModel)
+    public SettingsController(
+        AiModelSettingsService aiModel, EmbeddingModelSettingsService embeddingModel, CurrentUserAccessor currentUser)
     {
         _aiModel = aiModel;
         _embeddingModel = embeddingModel;
+        _currentUser = currentUser;
     }
+
+    // The model deployments are shared by every client (one Azure OpenAI resource, one bill), so
+    // changing them is an admin-only action; anyone signed in may read the current choice.
+    private bool IsAdmin => _currentUser.Current.IsAdmin;
 
     [HttpGet("ai-model")]
     public ActionResult<AiModelSettingsDto> GetAiModel() =>
@@ -28,6 +36,8 @@ public class SettingsController : ControllerBase
     [HttpPut("ai-model")]
     public async Task<ActionResult<AiModelSettingsDto>> SetAiModel(UpdateAiModelRequest request, CancellationToken ct)
     {
+        if (!IsAdmin) return Forbid();
+
         var deployment = request.Deployment?.Trim();
         if (string.IsNullOrWhiteSpace(deployment))
             return BadRequest("Deployment name is required.");
@@ -46,6 +56,8 @@ public class SettingsController : ControllerBase
     [HttpPut("embedding-model")]
     public async Task<ActionResult<EmbeddingModelSettingsDto>> SetEmbeddingModel(UpdateEmbeddingModelRequest request, CancellationToken ct)
     {
+        if (!IsAdmin) return Forbid();
+
         var deployment = request.Deployment?.Trim();
         if (string.IsNullOrWhiteSpace(deployment))
             return BadRequest("Deployment name is required.");

@@ -142,3 +142,15 @@ td {
   cursor: pointer;
 }
 .icon-btn:hover { background: #fdf1e7; color: var(--orange); }
+/* Small inline loading spinner, used wherever a slow request would otherwise look like a freeze. */
+.spinner {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--line);
+  border-top-color: var(--blue);
+  border-radius: 999px;
+  animation: spin .8s linear infinite;
+  flex: none;
+}
+@keyframes spin { to { transform: rotate(360deg); } }

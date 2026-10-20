@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { DocumentDetail, DocumentSummary, Manufacturer } from './types';
+import type { DocumentDetail, DocumentSummary, Manufacturer, Me } from './types';
 import {
   listDocuments, listStatuses, getDocument, uploadDocument,
   analyzeDocument, deleteDocument, reanalyzeDocument,
 } from './api/documentsApi';
+import { getMe } from './api/adminApi';
+import { NotAuthorizedError } from './api/http';
+import { signOut } from './auth/auth';
 import { listManufacturers, createManufacturer, updateManufacturer, deleteManufacturer } from './api/manufacturersApi';
 import { useTheme } from './hooks/useTheme';
 import { AppHeader } from './components/AppHeader';
@@ -12,6 +15,7 @@ import { InstructionsPanel } from './components/InstructionsPanel';
 import { QueueStats } from './components/QueueStats';
 import { DocumentQueueTable } from './components/DocumentQueueTable';
 import { DocumentViewerModal } from './components/DocumentViewerModal';
+import type { ViewerTab } from './components/DocumentViewerModal';
 import { SettingsPage } from './components/SettingsPage';
 import './styles/tokens.css';
 
@@ -27,7 +31,63 @@ const UPLOAD_CONCURRENCY = 3;
 
 const ACTIVE_STATUSES = ['Queued', 'Extracting', 'Mapping'];
 
+/** Shown to someone who signed in with Microsoft fine but is not on the application's allow-list. */
+function AccessDenied({ onSignOut, showSignOut }: { onSignOut: () => void; showSignOut: boolean }) {
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      <div className="card" style={{ maxWidth: 460, padding: '34px 36px', textAlign: 'center' }}>
+        <h3 style={{ fontSize: 24, marginBottom: 10 }}>Access denied</h3>
+        <p style={{ margin: '0 0 22px', color: 'var(--muted)', fontSize: 14.5 }}>
+          Your Microsoft account is not on the list of people allowed to use this application.
+          Ask an administrator to add you, then sign in again.
+        </p>
+        {showSignOut && <button className="pill pill-solid" onClick={onSignOut}>Sign out</button>}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Entry point: finds out who the signed-in person is (GET /api/me) before anything else is loaded,
+ * so a person who is not on the allow-list never even triggers the data requests.
+ */
 export default function App() {
+  const [me, setMe] = useState<Me | null>(null);
+  const [denied, setDenied] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+
+    async function load() {
+      try {
+        const result = await getMe();
+        if (!cancelled) setMe(result);
+      } catch (err) {
+        if (cancelled) return;
+        if (err instanceof NotAuthorizedError) { setDenied(true); return; }
+        // The API or its serverless database may still be waking up — keep trying.
+        console.error('Failed to identify the signed-in user, retrying', err);
+        timer = window.setTimeout(load, 3000);
+      }
+    }
+    load();
+
+    return () => { cancelled = true; if (timer) window.clearTimeout(timer); };
+  }, []);
+
+  if (denied) return <AccessDenied onSignOut={() => void signOut()} showSignOut />;
+  if (!me) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, color: 'var(--muted)' }}>
+        <span className="spinner" aria-hidden="true" /> Connecting…
+      </div>
+    );
+  }
+  return <Console me={me} />;
+}
+
+function Console({ me }: { me: Me }) {
   // No default: forces an explicit choice from the dropdown rather than silently uploading
   // under whichever manufacturer happened to be first/last selected.
   const [manufacturer, setManufacturer] = useState('');
@@ -40,8 +100,10 @@ export default function App() {
   const { theme, setTheme } = useTheme();
 
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
-  const [viewer, setViewer] = useState<{ id: string; tab: 'source' | 'extract' | 'canon' | 'instructions' } | null>(null);
-  const [viewerDoc, setViewerDoc] = useState<DocumentDetail | null>(null);
+  const [viewer, setViewer] = useState<{ id: string; tab: ViewerTab } | null>(null);
+  // Header-level detail of the open document (the original file's link). Loaded in the background:
+  // the viewer itself opens immediately from the queue row, and each tab fetches its own content.
+  const [viewerDetail, setViewerDetail] = useState<DocumentDetail | null>(null);
 
   const [initialLoadDone, setInitialLoadDone] = useState(false);
   const [connectionIssue, setConnectionIssue] = useState(false);
@@ -209,6 +271,7 @@ export default function App() {
       customInstructions: instructions.trim() || null,
       isCumulative: false,
       monthlyNetSales: null, monthlyCommission: null, monthlyLineCount: null,
+      clientName: me.clientName,
     }));
     setDocuments((prev) => [...placeholders, ...prev]);
 
@@ -246,15 +309,13 @@ export default function App() {
     refreshFull();
   }
 
-  async function handleOpen(id: string, tab: 'source' | 'extract' | 'canon' | 'instructions') {
+  function handleOpen(id: string, tab: ViewerTab) {
+    // Open at once — no waiting on the network — then fill in the original file's link.
     setViewer({ id, tab });
-    try {
-      const detail = await getDocument(id);
-      setViewerDoc(detail);
-    } catch (err) {
-      console.error('Failed to load document detail', err);
-      setViewer(null);
-    }
+    setViewerDetail(null);
+    getDocument(id)
+      .then((detail) => setViewerDetail(detail))
+      .catch((err) => console.error('Failed to load document detail', err));
   }
 
   async function handleReanalyze(id: string) {
@@ -279,7 +340,7 @@ export default function App() {
     setDocuments((prev) => prev.filter((d) => d.id !== id));
     if (viewer?.id === id) {
       setViewer(null);
-      setViewerDoc(null);
+      setViewerDetail(null);
     }
     try {
       await deleteDocument(id);
@@ -295,6 +356,7 @@ export default function App() {
     doneIds.forEach((id) => deleteDocument(id).catch((err) => console.error('Failed to delete', id, err)));
   }
 
+  const viewerSummary = viewer ? documents.find((d) => d.id === viewer.id) : undefined;
   const doneDocs = documents.filter((d) => d.status === 'Done');
   const runningCount = documents.filter((d) => ACTIVE_STATUSES.includes(d.status)).length;
   // For a year-to-date report the batch total must use the month's own figure, otherwise adding
@@ -313,8 +375,9 @@ export default function App() {
   if (view === 'settings') {
     return (
       <div style={{ minHeight: '100vh', paddingBottom: 72 }}>
-        <AppHeader onOpenSettings={() => setView('queue')} />
+        <AppHeader me={me} onOpenSettings={() => setView('queue')} onSignOut={() => void signOut()} />
         <SettingsPage
+          me={me}
           manufacturers={manufacturers}
           onCreate={handleCreateManufacturer}
           onUpdate={handleUpdateManufacturer}
@@ -329,7 +392,7 @@ export default function App() {
 
   return (
     <div style={{ minHeight: '100vh', paddingBottom: 72 }}>
-      <AppHeader onOpenSettings={() => setView('settings')} />
+      <AppHeader me={me} onOpenSettings={() => setView('settings')} onSignOut={() => void signOut()} />
 
       <div style={{ maxWidth: 1680, margin: '0 auto', padding: '30px 40px' }}>
         {connectionIssue && (
@@ -383,11 +446,13 @@ export default function App() {
         />
       </div>
 
-      {viewer && viewerDoc && viewerDoc.id === viewer.id && (
+      {viewer && viewerSummary && (
         <DocumentViewerModal
-          doc={viewerDoc}
+          key={viewer.id}
+          summary={viewerSummary}
+          detail={viewerDetail && viewerDetail.id === viewer.id ? viewerDetail : null}
           initialTab={viewer.tab}
-          onClose={() => { setViewer(null); setViewerDoc(null); }}
+          onClose={() => { setViewer(null); setViewerDetail(null); }}
         />
       )}
     </div>

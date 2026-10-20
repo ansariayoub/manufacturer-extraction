@@ -1,15 +1,66 @@
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
 using System.Text.Json;
 using ManufacturerExtraction.Api.Data;
 using ManufacturerExtraction.Api.Models;
 using ManufacturerExtraction.Api.Services;
+using ManufacturerExtraction.Api.Services.Auth;
 using ManufacturerExtraction.Api.Services.Interfaces;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddControllers();
+// --- Sign-in (Microsoft Entra) -------------------------------------------------------------
+// Only enforced once AzureAd:TenantId/ClientId are configured; until then the API stays open and
+// every caller is an admin of the default client (see AuthSettings).
+var authSettings = new AuthSettings(builder.Configuration);
+builder.Services.AddSingleton(authSettings);
+
+if (authSettings.Enabled)
+{
+    builder.Services
+        .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+        .AddJwtBearer(options =>
+        {
+            options.Authority = $"https://login.microsoftonline.com/{authSettings.TenantId}/v2.0";
+            options.MapInboundClaims = false; // keep Entra's own claim names (oid, preferred_username, ...)
+            options.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidAudiences = new[] { authSettings.ClientId, $"api://{authSettings.ClientId}" },
+                // Entra issues v1 (sts.windows.net) or v2 (login.microsoftonline.com) access tokens
+                // depending on the app registration's manifest; accept either so the API does not
+                // depend on that setting.
+                ValidIssuers = new[]
+                {
+                    $"https://login.microsoftonline.com/{authSettings.TenantId}/v2.0",
+                    $"https://sts.windows.net/{authSettings.TenantId}/",
+                },
+            };
+        });
+}
+
+builder.Services.AddAuthorization(options =>
+{
+    if (authSettings.Enabled)
+        options.FallbackPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build();
+});
+
+builder.Services.AddScoped<CurrentUserAccessor>();
+builder.Services.AddScoped<AppUserResolver>();
+
+builder.Services.AddControllers(options => options.Filters.Add<AppUserFilter>());
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+// The viewer's tabs return large JSON payloads (canonical lines, the raw extraction); compressing
+// them cuts their size roughly tenfold, which is most of the wait on a big file.
+builder.Services.AddResponseCompression(options => options.EnableForHttps = true);
+
+// Holds the parsed/pretty-printed view of a large document for a few minutes so paging through it
+// does not re-read and re-parse the database blob on every "Next" click. Size-limited (bytes,
+// estimated per entry) so a handful of huge files cannot exhaust the App Service's memory.
+builder.Services.AddMemoryCache(options => options.SizeLimit = 150_000_000);
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(
@@ -41,7 +92,9 @@ builder.Services.AddCors(options =>
                   "http://localhost:5173",
                   "https://agreeable-moss-0065fd60f.7.azurestaticapps.net")
               .AllowAnyHeader()
-              .AllowAnyMethod());
+              .AllowAnyMethod()
+              // Lets the browser read the file name the export endpoints suggest.
+              .WithExposedHeaders("Content-Disposition"));
 });
 
 builder.Services.AddSingleton<IProcessingCancellationRegistry, ProcessingCancellationRegistry>();
@@ -68,7 +121,10 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.UseResponseCompression();
 app.UseCors();
+if (authSettings.Enabled) app.UseAuthentication();
+app.UseAuthorization();
 app.MapControllers();
 
 using (var scope = app.Services.CreateScope())

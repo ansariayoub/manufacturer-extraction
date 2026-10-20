@@ -4,6 +4,7 @@ using ManufacturerExtraction.Api.Data;
 using ManufacturerExtraction.Api.Dtos;
 using ManufacturerExtraction.Api.Models;
 using ManufacturerExtraction.Api.Services;
+using ManufacturerExtraction.Api.Services.Auth;
 using ManufacturerExtraction.Api.Services.Interfaces;
 
 namespace ManufacturerExtraction.Api.Controllers;
@@ -18,21 +19,23 @@ public class DocumentsController : ControllerBase
     private readonly IBlobStorageService _blobStorage;
     private readonly IDocumentProcessingQueue _queue;
     private readonly IProcessingCancellationRegistry _cancellationRegistry;
-    private readonly ICumulativePeriodService _cumulativePeriod;
+    private readonly CurrentUserAccessor _currentUser;
 
     public DocumentsController(
         AppDbContext db,
         IBlobStorageService blobStorage,
         IDocumentProcessingQueue queue,
         IProcessingCancellationRegistry cancellationRegistry,
-        ICumulativePeriodService cumulativePeriod)
+        CurrentUserAccessor currentUser)
     {
         _db = db;
         _blobStorage = blobStorage;
         _queue = queue;
         _cancellationRegistry = cancellationRegistry;
-        _cumulativePeriod = cumulativePeriod;
+        _currentUser = currentUser;
     }
+
+    private AppUserContext Me => _currentUser.Current;
 
     [HttpPost("upload")]
     public async Task<ActionResult<DocumentSummaryDto>> Upload(
@@ -56,6 +59,7 @@ public class DocumentsController : ControllerBase
         var document = new Document
         {
             Id = Guid.NewGuid(),
+            ClientId = Me.ClientId,
             OriginalFileName = file.FileName,
             BlobUrl = blobUrl,
             FileType = extension,
@@ -71,7 +75,7 @@ public class DocumentsController : ControllerBase
         _db.Documents.Add(document);
         await _db.SaveChangesAsync(ct);
 
-        return Ok(document.ToSummaryDto());
+        return Ok(document.ToSummaryDto(Me.ClientName));
     }
 
     /// <summary>
@@ -81,7 +85,7 @@ public class DocumentsController : ControllerBase
     [HttpPost("{id:guid}/analyze")]
     public async Task<ActionResult> Analyze(Guid id, CancellationToken ct)
     {
-        var exists = await _db.Documents.AnyAsync(d => d.Id == id, ct);
+        var exists = await _db.Documents.VisibleTo(Me).AnyAsync(d => d.Id == id, ct);
         if (!exists) return NotFound();
 
         _queue.Enqueue(id);
@@ -99,7 +103,9 @@ public class DocumentsController : ControllerBase
         Guid id, [FromBody] ReanalyzeRequest? request, CancellationToken ct)
     {
         var document = await _db.Documents
+            .VisibleTo(Me)
             .Include(d => d.AnalyticsExtraction)
+            .Include(d => d.Client)
             .FirstOrDefaultAsync(d => d.Id == id, ct);
 
         if (document is null) return NotFound();
@@ -129,12 +135,13 @@ public class DocumentsController : ControllerBase
         await _db.SaveChangesAsync(ct);
 
         _queue.Enqueue(id);
-        return Ok(document.ToSummaryDto());
+        return Ok(document.ToSummaryDto(document.Client?.Name ?? Me.ClientName));
     }
 
     /// <summary>
     /// Full queue listing. Projected in SQL so the nvarchar(max) JSON columns are never read:
     /// this endpoint is polled, and loading them was costing seconds and tens of megabytes per call.
+    /// A regular user gets their own client's documents; an admin gets every client's.
     /// </summary>
     [HttpGet]
     public async Task<ActionResult<List<DocumentSummaryDto>>> GetAll(CancellationToken ct)
@@ -144,10 +151,12 @@ public class DocumentsController : ControllerBase
         // RawJson / AnalyticsJson are never part of the query.
         var rows = await _db.Documents
             .AsNoTracking()
+            .VisibleTo(Me)
             .OrderByDescending(d => d.UploadDate)
             .Select(d => new
             {
-                d.Id, d.OriginalFileName, d.FileSizeBytes, d.UploadDate,
+                d.Id, d.ClientId, ClientName = d.Client!.Name,
+                d.OriginalFileName, d.FileSizeBytes, d.UploadDate,
                 d.Manufacturer, d.PeriodMonth, d.PeriodYear,
                 d.ProcessingStatus, d.ProgressPct, d.ErrorMessage, d.HasWarnings,
                 d.TotalNetSales, d.TotalCommission,
@@ -159,10 +168,12 @@ public class DocumentsController : ControllerBase
         // is derived here, at read time, by subtracting the previous period's document — pure
         // arithmetic over columns already in hand, so it adds no query and no JSON parsing.
         // Deriving it here rather than during processing means each file is still processed
-        // entirely on its own, and upload order does not matter.
+        // entirely on its own, and upload order does not matter. Keyed by client as well: two
+        // clients can each have a manufacturer of the same name, and their reports must never be
+        // subtracted from one another.
         var totalsByPeriod = rows
             .Where(r => r.IsCumulative && r.TotalNetSales != null)
-            .GroupBy(r => (r.Manufacturer, r.PeriodYear, r.PeriodMonth))
+            .GroupBy(r => (r.ClientId, r.Manufacturer, r.PeriodYear, r.PeriodMonth))
             .ToDictionary(g => g.Key, g => g.First());
 
         var documents = rows.Select(d =>
@@ -171,7 +182,7 @@ public class DocumentsController : ControllerBase
 
             var previous = CumulativePeriodService.PreviousPeriod(d.PeriodMonth, d.PeriodYear);
             if (d.IsCumulative && previous is not null
-                && totalsByPeriod.TryGetValue((d.Manufacturer, previous.Value.Year, previous.Value.Month), out var prev))
+                && totalsByPeriod.TryGetValue((d.ClientId, d.Manufacturer, previous.Value.Year, previous.Value.Month), out var prev))
             {
                 prevNet = prev.TotalNetSales;
                 prevComm = prev.TotalCommission;
@@ -186,7 +197,8 @@ public class DocumentsController : ControllerBase
                 d.IsCumulative,
                 CumulativePeriodService.DeriveMonthly(d.IsCumulative, d.PeriodMonth, d.TotalNetSales, prevNet),
                 CumulativePeriodService.DeriveMonthly(d.IsCumulative, d.PeriodMonth, d.TotalCommission, prevComm),
-                null);
+                null,
+                d.ClientName);
         }).ToList();
 
         return Ok(documents);
@@ -201,6 +213,7 @@ public class DocumentsController : ControllerBase
     {
         var rows = await _db.Documents
             .AsNoTracking()
+            .VisibleTo(Me)
             .Select(d => new { d.Id, d.ProcessingStatus, d.ProgressPct, d.ErrorMessage, d.HasWarnings })
             .ToListAsync(ct);
 
@@ -210,13 +223,17 @@ public class DocumentsController : ControllerBase
         return Ok(statuses);
     }
 
+    /// <summary>
+    /// Header-level detail only — it returns immediately even for a huge file. The viewer's tabs
+    /// then pull their own content page by page from DocumentContentController.
+    /// </summary>
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<DocumentDetailDto>> GetById(Guid id, CancellationToken ct)
     {
         var document = await _db.Documents
             .AsNoTracking()
-            .Include(d => d.RawExtraction)
-            .Include(d => d.AnalyticsExtraction)
+            .VisibleTo(Me)
+            .Include(d => d.Client)
             .FirstOrDefaultAsync(d => d.Id == id, ct);
 
         if (document is null) return NotFound();
@@ -228,36 +245,16 @@ public class DocumentsController : ControllerBase
         }
         catch { }
 
-        var dto = document.ToDetailDto(sourceUrl);
-
-        // For a cumulative report, the viewer shows the month's own lines rather than the
-        // year-to-date ones. This is the single-document path, so loading the previous month's
-        // canonical JSON to diff against is affordable here — unlike on the polled listing.
-        if (document.IsCumulative)
-        {
-            var period = await _cumulativePeriod.ComputeMonthlyAsync(document, dto.CanonicalRecords, ct);
-            if (period.MonthlyLines is not null)
-            {
-                dto = dto with
-                {
-                    CanonicalRecords = period.MonthlyLines,
-                    MonthlyNetSales = period.MonthlyLines.Sum(l => (decimal?)l.NetSales ?? 0m),
-                    MonthlyCommission = period.MonthlyLines.Sum(l => (decimal?)l.Commission ?? 0m),
-                    MonthlyLineCount = period.MonthlyLines.Count
-                };
-            }
-        }
-
-        return Ok(dto);
+        return Ok(document.ToDetailDto(document.Client?.Name ?? "", sourceUrl));
     }
 
     [HttpDelete("{id:guid}")]
     public async Task<ActionResult> Delete(Guid id, CancellationToken ct)
     {
-        _cancellationRegistry.Cancel(id); // stoppe net tout traitement en cours pour ce document
-
-        var document = await _db.Documents.FindAsync(new object[] { id }, ct);
+        var document = await _db.Documents.VisibleTo(Me).FirstOrDefaultAsync(d => d.Id == id, ct);
         if (document is null) return NotFound();
+
+        _cancellationRegistry.Cancel(id); // stoppe net tout traitement en cours pour ce document
 
         _db.Documents.Remove(document);
         await _db.SaveChangesAsync(ct);

@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
-import type { Manufacturer, ManufacturerPromptHistoryEntry } from '../types';
+import type { Manufacturer, ManufacturerPromptHistoryEntry, Me } from '../types';
+import { AdminPanel } from './AdminPanel';
 import type { Theme } from '../hooks/useTheme';
 import { listPromptHistory } from '../api/manufacturersApi';
 import { getAiModel, setAiModel, getEmbeddingModel, setEmbeddingModel } from '../api/settingsApi';
 
 interface Props {
+  me: Me;
   manufacturers: Manufacturer[];
   onCreate: (name: string) => Promise<void>;
   onUpdate: (id: string, changes: { name?: string; defaultInstructions?: string | null }) => Promise<void>;
@@ -26,7 +28,7 @@ function formatTimestamp(iso: string) {
  * template, which the upload screen pre-fills whenever that manufacturer is selected. Also holds
  * the light/dark mode toggle.
  */
-export function SettingsPage({ manufacturers, onCreate, onUpdate, onDelete, theme, onThemeChange, onClose }: Props) {
+export function SettingsPage({ me, manufacturers, onCreate, onUpdate, onDelete, theme, onThemeChange, onClose }: Props) {
   const [newName, setNewName] = useState('');
   const [creating, setCreating] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -211,7 +213,7 @@ export function SettingsPage({ manufacturers, onCreate, onUpdate, onDelete, them
           <h3 style={{ fontSize: 19, marginBottom: 4 }}>AI model</h3>
           <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 14 }}>
             Which Azure OpenAI deployment the canonical mapper calls. Applies to every document
-            processed from now on, app-wide.
+            processed from now on, app-wide.{!me.isAdmin && ' Only administrators can change it.'}
           </div>
           {aiModel ? (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
@@ -219,7 +221,7 @@ export function SettingsPage({ manufacturers, onCreate, onUpdate, onDelete, them
                 <button
                   key={deployment}
                   className={deployment === aiModel.current ? 'pill pill-solid' : 'pill'}
-                  disabled={aiModelBusy}
+                  disabled={aiModelBusy || !me.isAdmin}
                   onClick={() => handleAiModelChange(deployment)}
                   title={deployment === aiModel.current ? 'Currently active' : `Switch to ${deployment}`}
                 >
@@ -235,7 +237,7 @@ export function SettingsPage({ manufacturers, onCreate, onUpdate, onDelete, them
         <div className="card" style={{ padding: 22 }}>
           <h3 style={{ fontSize: 19, marginBottom: 4 }}>Embedding model</h3>
           <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 14 }}>
-            Which Azure OpenAI embedding deployment is used, once a feature that needs one is built.
+            Which Azure OpenAI embedding deployment is used, once a feature that needs one is built.{!me.isAdmin && ' Only administrators can change it.'}
           </div>
           {embeddingModel ? (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
@@ -243,7 +245,7 @@ export function SettingsPage({ manufacturers, onCreate, onUpdate, onDelete, them
                 <button
                   key={deployment}
                   className={deployment === embeddingModel.current ? 'pill pill-solid' : 'pill'}
-                  disabled={embeddingModelBusy}
+                  disabled={embeddingModelBusy || !me.isAdmin}
                   onClick={() => handleEmbeddingModelChange(deployment)}
                   title={deployment === embeddingModel.current ? 'Currently active' : `Switch to ${deployment}`}
                 >
@@ -258,9 +260,9 @@ export function SettingsPage({ manufacturers, onCreate, onUpdate, onDelete, them
       </div>
 
       <div className="card" style={{ padding: 22 }}>
-        <h3 style={{ fontSize: 19, marginBottom: 4 }}>Manufacturers</h3>
+        <h3 style={{ fontSize: 19, marginBottom: 4 }}>Manufacturers — {me.clientName}</h3>
         <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 16 }}>
-          The list offered on the upload screen. Give a manufacturer a default set of processing
+          The list offered on the upload screen for {me.clientName} — each client keeps its own. Give a manufacturer a default set of processing
           instructions here and it will pre-fill the instructions box automatically whenever that
           manufacturer is picked for a new import — still editable per file at upload time.
         </div>
@@ -387,6 +389,8 @@ export function SettingsPage({ manufacturers, onCreate, onUpdate, onDelete, them
           ))}
         </div>
       </div>
+
+      {me.isAdmin && <AdminPanel />}
     </div>
   );
 }

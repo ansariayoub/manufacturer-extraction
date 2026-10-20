@@ -216,6 +216,7 @@ public class CumulativePeriodService : ICumulativePeriodService
         return await _db.Documents
             .Include(d => d.AnalyticsExtraction)
             .Where(d => d.Id != document.Id
+                     && d.ClientId == document.ClientId
                      && d.Manufacturer == document.Manufacturer
                      && d.PeriodMonth == prevMonthText
                      && d.PeriodYear == prevYearText

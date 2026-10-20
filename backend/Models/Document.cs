@@ -12,6 +12,11 @@ public enum ProcessingStatus
 public class Document
 {
     public Guid Id { get; set; }
+
+    /// <summary>The client whose user uploaded this report — the only client (besides admins) allowed to see it.</summary>
+    public Guid ClientId { get; set; }
+    public Client? Client { get; set; }
+
     public string OriginalFileName { get; set; } = string.Empty;
     public string BlobUrl { get; set; } = string.Empty;
     public string FileType { get; set; } = string.Empty;

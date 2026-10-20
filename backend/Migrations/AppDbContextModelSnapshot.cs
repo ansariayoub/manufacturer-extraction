@@ -65,6 +65,74 @@ namespace ManufacturerExtraction.Api.Migrations
                     b.ToTable("AppSettings");
                 });
 
+            modelBuilder.Entity("ManufacturerExtraction.Api.Models.AppUser", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ClientId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedDate")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("DisplayName")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasMaxLength(320)
+                        .HasColumnType("nvarchar(320)");
+
+                    b.Property<bool>("IsAdmin")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("ObjectId")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ClientId");
+
+                    b.HasIndex("Email")
+                        .IsUnique();
+
+                    b.ToTable("AppUsers");
+                });
+
+            modelBuilder.Entity("ManufacturerExtraction.Api.Models.Client", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedDate")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Name")
+                        .IsUnique();
+
+                    b.ToTable("Clients");
+
+                    b.HasData(
+                        new
+                        {
+                            Id = new Guid("00000000-0000-0000-0000-00000000c001"),
+                            CreatedDate = new DateTime(2026, 10, 20, 0, 0, 0, 0, DateTimeKind.Utc),
+                            Name = "Default client"
+                        });
+                });
+
             modelBuilder.Entity("ManufacturerExtraction.Api.Models.Document", b =>
                 {
                     b.Property<Guid>("Id")
@@ -77,6 +145,9 @@ namespace ManufacturerExtraction.Api.Migrations
                     b.Property<string>("BlobUrl")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<Guid>("ClientId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<string>("ContentUnderstandingJobId")
                         .HasColumnType("nvarchar(max)");
@@ -140,6 +211,8 @@ namespace ManufacturerExtraction.Api.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ClientId");
+
                     b.HasIndex("ProcessingStatus");
 
                     b.HasIndex("UploadDate");
@@ -151,6 +224,9 @@ namespace ManufacturerExtraction.Api.Migrations
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ClientId")
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<DateTime>("CreatedDate")
@@ -166,7 +242,7 @@ namespace ManufacturerExtraction.Api.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Name")
+                    b.HasIndex("ClientId", "Name")
                         .IsUnique();
 
                     b.ToTable("Manufacturers");
@@ -228,6 +304,39 @@ namespace ManufacturerExtraction.Api.Migrations
                         .IsRequired();
 
                     b.Navigation("Document");
+                });
+
+            modelBuilder.Entity("ManufacturerExtraction.Api.Models.AppUser", b =>
+                {
+                    b.HasOne("ManufacturerExtraction.Api.Models.Client", "Client")
+                        .WithMany()
+                        .HasForeignKey("ClientId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Client");
+                });
+
+            modelBuilder.Entity("ManufacturerExtraction.Api.Models.Document", b =>
+                {
+                    b.HasOne("ManufacturerExtraction.Api.Models.Client", "Client")
+                        .WithMany()
+                        .HasForeignKey("ClientId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Client");
+                });
+
+            modelBuilder.Entity("ManufacturerExtraction.Api.Models.Manufacturer", b =>
+                {
+                    b.HasOne("ManufacturerExtraction.Api.Models.Client", "Client")
+                        .WithMany()
+                        .HasForeignKey("ClientId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Client");
                 });
 
             modelBuilder.Entity("ManufacturerExtraction.Api.Models.ManufacturerPromptHistory", b =>
