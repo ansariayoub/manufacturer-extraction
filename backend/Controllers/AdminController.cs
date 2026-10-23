@@ -8,9 +8,9 @@ using ManufacturerExtraction.Api.Services.Auth;
 namespace ManufacturerExtraction.Api.Controllers;
 
 /// <summary>
-/// Admin-only management of the customer companies and the people allowed to sign in for them.
-/// Microsoft Entra (via the Enterprise application's user assignment) decides who may reach the app
-/// at all; this is where an admin says which client each allowed person belongs to.
+/// Admin-only management of clients and users. Accounts are created automatically on a person's first
+/// Microsoft sign-in (Entra's Enterprise application decides who may sign in at all); this is where an
+/// admin renames a client, moves a person to another client, or makes someone an admin.
 /// </summary>
 [ApiController]
 [Route("api/admin")]

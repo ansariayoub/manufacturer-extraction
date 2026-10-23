@@ -1,23 +1,18 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { AppUser, ClientInfo } from '../types';
-import {
-  createClient, createUser, deleteClient, deleteUser, listClients, listUsers, renameClient, updateUser,
-} from '../api/adminApi';
+import { deleteClient, deleteUser, listClients, listUsers, renameClient, updateUser } from '../api/adminApi';
 
 /**
- * Admin-only: the customer companies, and the people allowed to sign in for each. Microsoft Entra
- * (the Enterprise application's user assignment) decides who can reach the app at all; this is where
- * an admin says which client each allowed person belongs to, and who else is an admin.
+ * Admin-only overview of who uses the app. Nobody is added by hand: Microsoft Entra (the Enterprise
+ * application's user assignment) decides who can sign in, and the first time someone does, the app
+ * creates their account and a client carrying their name. Here an admin can rename a client, move a
+ * person to another client, make someone an admin, or remove an account.
  */
 export function AdminPanel() {
   const [clients, setClients] = useState<ClientInfo[] | null>(null);
   const [users, setUsers] = useState<AppUser[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const [newClient, setNewClient] = useState('');
-  const [newEmail, setNewEmail] = useState('');
-  const [newUserClient, setNewUserClient] = useState('');
-  const [newUserAdmin, setNewUserAdmin] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const reload = useCallback(async () => {
@@ -25,7 +20,6 @@ export function AdminPanel() {
       const [c, u] = await Promise.all([listClients(), listUsers()]);
       setClients(c);
       setUsers(u);
-      setNewUserClient((current) => current || c[0]?.id || '');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load clients and users.');
     }
@@ -59,16 +53,16 @@ export function AdminPanel() {
   }
 
   async function handleDeleteUser(u: AppUser) {
-    if (window.confirm(`Remove ${u.email} from the allowed users?`)) await run(() => deleteUser(u.id));
+    if (window.confirm(`Remove the account of ${u.displayName ?? u.email}? It is created again the next time they sign in, unless you also unassign them in Microsoft Entra.`)) await run(() => deleteUser(u.id));
   }
 
   return (
     <div className="card" style={{ padding: 22, marginTop: 22 }}>
-      <h3 style={{ fontSize: 19, marginBottom: 4 }}>Clients &amp; users</h3>
+      <h3 style={{ fontSize: 19, marginBottom: 4 }}>Users</h3>
       <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 16 }}>
-        Each client only sees its own manufacturers and reports. Add the people allowed to use the
-        app under the client they work for — they must also be assigned to the application in
-        Microsoft Entra (Enterprise applications → Users and groups) to be able to sign in.
+        Each person who signs in with Microsoft gets their own client, named after them, and only sees their
+        own manufacturers and reports. To let someone in, assign them to the application in Microsoft Entra
+        (Enterprise applications → Users and groups): their account appears here by itself on first sign-in.
       </div>
 
       {error && (
@@ -84,19 +78,6 @@ export function AdminPanel() {
       ) : (
         <>
           <div className="lbl" style={{ marginBottom: 8 }}>Clients</div>
-          <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
-            <input
-              className="fld" style={{ flex: 1 }} placeholder="New client name…" value={newClient}
-              onChange={(e) => setNewClient(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && newClient.trim()) void run(async () => { await createClient(newClient.trim()); setNewClient(''); }); }}
-            />
-            <button
-              className="pill pill-solid" disabled={busy || !newClient.trim()}
-              onClick={() => run(async () => { await createClient(newClient.trim()); setNewClient(''); })}
-            >
-              + Add client
-            </button>
-          </div>
           <div style={{ marginBottom: 26 }}>
             {clients.map((c) => (
               <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderTop: '1px solid var(--line-soft)' }}>
@@ -110,27 +91,8 @@ export function AdminPanel() {
             ))}
           </div>
 
-          <div className="lbl" style={{ marginBottom: 8 }}>Allowed users</div>
-          <div style={{ display: 'flex', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
-            <input
-              className="fld" style={{ flex: '1 1 260px' }} type="email" placeholder="name@company.com" value={newEmail}
-              onChange={(e) => setNewEmail(e.target.value)}
-            />
-            <select className="fld" value={newUserClient} onChange={(e) => setNewUserClient(e.target.value)}>
-              {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13.5, color: 'var(--text)' }}>
-              <input type="checkbox" checked={newUserAdmin} onChange={(e) => setNewUserAdmin(e.target.checked)} /> Admin
-            </label>
-            <button
-              className="pill pill-solid" disabled={busy || !newEmail.trim() || !newUserClient}
-              onClick={() => run(async () => { await createUser(newEmail.trim(), newUserClient, newUserAdmin); setNewEmail(''); setNewUserAdmin(false); })}
-            >
-              + Add user
-            </button>
-          </div>
-
-          {users.length === 0 && <div style={{ color: 'var(--muted)', fontSize: 13.5, padding: '10px 0' }}>No users yet.</div>}
+          <div className="lbl" style={{ marginBottom: 8 }}>People</div>
+          {users.length === 0 && <div style={{ color: 'var(--muted)', fontSize: 13.5, padding: '10px 0' }}>Nobody has signed in yet.</div>}
           {users.map((u) => (
             <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderTop: '1px solid var(--line-soft)', flexWrap: 'wrap' }}>
               <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>

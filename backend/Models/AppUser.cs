@@ -1,10 +1,10 @@
 namespace ManufacturerExtraction.Api.Models;
 
 /// <summary>
-/// An allow-listed person. Microsoft Entra authenticates who someone is (and the Enterprise
-/// application's "assignment required" setting gates who may sign in at all); this table is the
-/// application's own second check — which client the person belongs to, and whether they are an
-/// admin. A signed-in Entra user with no row here is refused with 403.
+/// A person who uses the application. Microsoft Entra authenticates who someone is and, through the
+/// Enterprise application's "assignment required" setting, decides who may sign in at all. The row is
+/// created automatically the first time the person signs in, together with their own client; it
+/// records which client they belong to and whether they are an admin.
 /// </summary>
 public class AppUser
 {

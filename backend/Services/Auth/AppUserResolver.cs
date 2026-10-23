@@ -6,8 +6,10 @@ using ManufacturerExtraction.Api.Models;
 namespace ManufacturerExtraction.Api.Services.Auth;
 
 /// <summary>
-/// Turns the validated Entra token into the application's own user: looks the person up in the
-/// allow-list table and returns their client and role, or null when they are not on the list.
+/// Turns the validated Entra token into the application's own user. Who may sign in at all is decided
+/// in Microsoft Entra (the Enterprise application's user assignment), so anyone holding a valid token
+/// is welcome here: the first time a person appears, the application creates their account and their
+/// own client — named after them — on the spot. Returns null only for a token that identifies no one.
 /// </summary>
 public class AppUserResolver
 {
@@ -50,21 +52,9 @@ public class AppUserResolver
 
         if (user is null)
         {
-            // First administrator: admitted by configuration instead of by a database row.
-            var bootstrap = emails.FirstOrDefault(e => _auth.BootstrapAdminEmails.Contains(e));
-            if (bootstrap is null) return null;
-
-            user = new AppUser
-            {
-                Id = Guid.NewGuid(),
-                Email = bootstrap,
-                ClientId = Client.DefaultId,
-                IsAdmin = true,
-                CreatedDate = DateTime.UtcNow,
-            };
-            _db.AppUsers.Add(user);
-            await _db.SaveChangesAsync(ct);
-            user.Client = await _db.Clients.AsNoTracking().FirstAsync(c => c.Id == Client.DefaultId, ct);
+            // First time this person is seen: create their account (and their own client).
+            user = await ProvisionAsync(oid, emails, name, ct);
+            if (user is null) return null;
         }
 
         // Remember the stable identifiers the first time we see them (rows are usually created from
@@ -77,6 +67,56 @@ public class AppUserResolver
         return new AppUserContext(
             user.Id, user.Email, user.DisplayName ?? user.Email,
             user.ClientId, user.Client?.Name ?? "", user.IsAdmin);
+    }
+
+    /// <summary>
+    /// Creates the account for a person seen for the first time. A bootstrap admin joins the default
+    /// client as an admin; everyone else gets a new client carrying their own name, so the "Client"
+    /// column of the queue shows who uploaded what and each person keeps a private manufacturer list.
+    /// </summary>
+    private async Task<AppUser?> ProvisionAsync(string? oid, List<string> emails, string? name, CancellationToken ct)
+    {
+        var bootstrap = emails.FirstOrDefault(e => _auth.BootstrapAdminEmails.Contains(e));
+        var email = bootstrap ?? emails.FirstOrDefault() ?? (oid is null ? null : $"{oid}@entra");
+        if (email is null) return null;
+
+        var displayName = string.IsNullOrWhiteSpace(name) ? null : name.Trim();
+
+        Client client;
+        if (bootstrap is not null)
+        {
+            client = await _db.Clients.FirstAsync(c => c.Id == Client.DefaultId, ct);
+        }
+        else
+        {
+            var clientName = displayName ?? email;
+            // Two people can share a display name; client names are unique, so tell them apart by email.
+            if (await _db.Clients.AnyAsync(c => c.Name.ToLower() == clientName.ToLower(), ct))
+                clientName = $"{clientName} ({email})";
+            client = new Client { Id = Guid.NewGuid(), Name = clientName, CreatedDate = DateTime.UtcNow };
+            _db.Clients.Add(client);
+        }
+
+        var user = new AppUser
+        {
+            Id = Guid.NewGuid(), Email = email, ObjectId = oid, DisplayName = displayName,
+            ClientId = client.Id, Client = client, IsAdmin = bootstrap is not null, CreatedDate = DateTime.UtcNow,
+        };
+        _db.AppUsers.Add(user);
+
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+            return user;
+        }
+        catch (DbUpdateException)
+        {
+            // The browser fires several requests at once on first load: a parallel one created the same
+            // account a moment earlier (unique email). Use theirs instead of failing this request.
+            _db.ChangeTracker.Clear();
+            return (oid is not null ? await _db.AppUsers.Include(u => u.Client).FirstOrDefaultAsync(u => u.ObjectId == oid, ct) : null)
+                   ?? await _db.AppUsers.Include(u => u.Client).FirstOrDefaultAsync(u => u.Email == email, ct);
+        }
     }
 
     private static string? First(ClaimsPrincipal p, params string[] types)
