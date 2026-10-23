@@ -40,13 +40,15 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
     private const int MaxPreambleChars = 2_000;
 
     private readonly OpenAiConcurrencyLimiter _limiter;
+    private readonly ExtractionPromptSettingsService _promptSettings;
 
     public AnalyticsTransformationService(
         IConfiguration config, ILogger<AnalyticsTransformationService> logger, OpenAiConcurrencyLimiter limiter,
-        AiModelSettingsService aiModelSettings)
+        AiModelSettingsService aiModelSettings, ExtractionPromptSettingsService promptSettings)
     {
         _logger = logger;
         _limiter = limiter;
+        _promptSettings = promptSettings;
 
         var endpoint = config["AzureOpenAI:Endpoint"]
             ?? throw new InvalidOperationException("Azure OpenAI endpoint missing");
@@ -69,6 +71,9 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
         var azureClient = new AzureOpenAIClient(new Uri(endpoint), new AzureKeyCredential(apiKey), clientOptions);
         _chatClient = azureClient.GetChatClient(deployment);
     }
+
+    /// <summary>The structured-output schema, shown read-only on the Settings page.</summary>
+    internal static string SchemaJson => Schema.ToString();
 
     private static readonly BinaryData Schema = BinaryData.FromString("""
     {
@@ -103,7 +108,11 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
     }
     """);
 
-    private static readonly string BaseSystemPrompt = """
+    /// <summary>
+    /// The factory system prompt. The Settings page can override it (see ExtractionPromptSettingsService);
+    /// this text is what applies until an administrator saves a change, and what "reset" returns to.
+    /// </summary>
+    internal static readonly string DefaultBaseSystemPrompt = """
         You transform raw document-extraction JSON from manufacturer sales, commission, or rebate reports into
         a canonical "sales" JSON array matching a fixed database schema. Rules:
         - Extract every itemized row that represents an individual transaction, adjustment, or rebate tied to a specific entity (distributor, dealer, product, or customer name) — even if the document is a commission statement, rebate summary, or adjustment report rather than a classic invoice.
@@ -145,9 +154,9 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
     /// precedence rule — not in the user message where they sat behind ~25 imperative default
     /// rules and lost every conflict (e.g. "ignore the YTD block" vs. the pivot rule above).
     /// </summary>
-    private static string BuildSystemPrompt(string? customInstructions, string? columnPlan = null, bool hasCollapsedPivotRows = false)
+    private static string BuildSystemPrompt(string basePrompt, string? customInstructions, string? columnPlan = null, bool hasCollapsedPivotRows = false)
     {
-        var prompt = BaseSystemPrompt;
+        var prompt = basePrompt;
 
         // The column map goes before the user overrides so that operator instructions still win.
         if (!string.IsNullOrWhiteSpace(columnPlan))
@@ -766,7 +775,7 @@ public class AnalyticsTransformationService : IAnalyticsTransformationService
         var columnPlan = await BuildColumnPlanAsync(
             tables, customInstructions, fallbackManufacturer, fallbackPeriodMonth, fallbackPeriodYear, ct);
 
-        var systemPrompt = BuildSystemPrompt(customInstructions, columnPlan, normalized.HasCollapsedPivotRows);
+        var systemPrompt = BuildSystemPrompt(_promptSettings.CurrentPrompt, customInstructions, columnPlan, normalized.HasCollapsedPivotRows);
 
         var results = new List<AnalyticsTransaction>?[chunks.Count];
         var warnings = new ConcurrentBag<string>();

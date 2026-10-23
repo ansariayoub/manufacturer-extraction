@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Manufacturer, ManufacturerPromptHistoryEntry, Me } from '../types';
 import { AdminPanel } from './AdminPanel';
+import { ExtractionPromptPanel } from './ExtractionPromptPanel';
 import type { Theme } from '../hooks/useTheme';
 import { listPromptHistory } from '../api/manufacturersApi';
 import { getAiModel, setAiModel, getEmbeddingModel, setEmbeddingModel } from '../api/settingsApi';
@@ -389,6 +390,8 @@ export function SettingsPage({ me, manufacturers, onCreate, onUpdate, onDelete, 
           ))}
         </div>
       </div>
+
+      {me.isAdmin && <ExtractionPromptPanel />}
 
       {me.isAdmin && <AdminPanel />}
     </div>

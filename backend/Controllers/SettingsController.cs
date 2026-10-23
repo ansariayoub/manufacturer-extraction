@@ -15,11 +15,14 @@ public class SettingsController : ControllerBase
 {
     private readonly AiModelSettingsService _aiModel;
     private readonly EmbeddingModelSettingsService _embeddingModel;
+    private readonly ExtractionPromptSettingsService _prompt;
     private readonly CurrentUserAccessor _currentUser;
 
     public SettingsController(
-        AiModelSettingsService aiModel, EmbeddingModelSettingsService embeddingModel, CurrentUserAccessor currentUser)
+        AiModelSettingsService aiModel, EmbeddingModelSettingsService embeddingModel,
+        ExtractionPromptSettingsService prompt, CurrentUserAccessor currentUser)
     {
+        _prompt = prompt;
         _aiModel = aiModel;
         _embeddingModel = embeddingModel;
         _currentUser = currentUser;
@@ -47,6 +50,40 @@ public class SettingsController : ControllerBase
 
         await _aiModel.SetDeploymentAsync(deployment, ct);
         return Ok(new AiModelSettingsDto(_aiModel.CurrentDeployment, _aiModel.AvailableDeployments));
+    }
+
+    private ExtractionPromptDto PromptDto() => new(
+        _prompt.CurrentPrompt, _prompt.DefaultPrompt, _prompt.IsCustomized,
+        AnalyticsTransformationService.SchemaJson, ExtractionPromptSettingsService.MaxLength);
+
+    // The prompt drives every client's extractions and can degrade them all, so unlike the model
+    // choice it is admin-only to read as well as to change.
+    [HttpGet("extraction-prompt")]
+    public ActionResult<ExtractionPromptDto> GetExtractionPrompt() =>
+        IsAdmin ? Ok(PromptDto()) : Forbid();
+
+    [HttpPut("extraction-prompt")]
+    public async Task<ActionResult<ExtractionPromptDto>> SetExtractionPrompt(UpdateExtractionPromptRequest request, CancellationToken ct)
+    {
+        if (!IsAdmin) return Forbid();
+
+        var text = request.Prompt ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(text))
+            return BadRequest("The prompt cannot be empty.");
+        if (text.Length > ExtractionPromptSettingsService.MaxLength)
+            return BadRequest($"The prompt is limited to {ExtractionPromptSettingsService.MaxLength:N0} characters.");
+
+        await _prompt.SetPromptAsync(text, ct);
+        return Ok(PromptDto());
+    }
+
+    [HttpDelete("extraction-prompt")]
+    public async Task<ActionResult<ExtractionPromptDto>> ResetExtractionPrompt(CancellationToken ct)
+    {
+        if (!IsAdmin) return Forbid();
+
+        await _prompt.ResetAsync(ct);
+        return Ok(PromptDto());
     }
 
     [HttpGet("embedding-model")]

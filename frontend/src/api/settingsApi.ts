@@ -41,3 +41,33 @@ export async function setEmbeddingModel(deployment: string): Promise<EmbeddingMo
   });
   return handle<EmbeddingModelSettings>(res);
 }
+
+export interface ExtractionPromptSettings {
+  prompt: string;
+  defaultPrompt: string;
+  isCustomized: boolean;
+  schema: string;
+  maxLength: number;
+}
+
+/** GET /api/settings/extraction-prompt — the system prompt sent to OpenAI for every extraction (admins only). */
+export async function getExtractionPrompt(): Promise<ExtractionPromptSettings> {
+  const res = await apiFetch('/api/settings/extraction-prompt');
+  return handle<ExtractionPromptSettings>(res);
+}
+
+/** PUT /api/settings/extraction-prompt — replaces it; the next document processed uses the new text. */
+export async function setExtractionPrompt(prompt: string): Promise<ExtractionPromptSettings> {
+  const res = await apiFetch('/api/settings/extraction-prompt', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt }),
+  });
+  return handle<ExtractionPromptSettings>(res);
+}
+
+/** DELETE /api/settings/extraction-prompt — goes back to the factory prompt compiled into the app. */
+export async function resetExtractionPrompt(): Promise<ExtractionPromptSettings> {
+  const res = await apiFetch('/api/settings/extraction-prompt', { method: 'DELETE' });
+  return handle<ExtractionPromptSettings>(res);
+}

@@ -104,6 +104,7 @@ builder.Services.AddSingleton<IDocumentProcessingQueue, DocumentProcessingQueue>
 builder.Services.AddSingleton<OpenAiConcurrencyLimiter>();
 // Settings-page-controlled choice of Azure OpenAI deployment — see AiModelSettingsService.
 builder.Services.AddSingleton<AiModelSettingsService>();
+builder.Services.AddSingleton<ExtractionPromptSettingsService>();
 builder.Services.AddSingleton<EmbeddingModelSettingsService>();
 builder.Services.AddHostedService<DocumentProcessingWorker>();
 
