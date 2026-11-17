@@ -54,20 +54,25 @@ function AccessDenied({ onSignOut, showSignOut }: { onSignOut: () => void; showS
 export default function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [denied, setDenied] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
+    let failures = 0;
 
     async function load() {
       try {
         const result = await getMe();
-        if (!cancelled) setMe(result);
+        if (!cancelled) { setFailure(null); setMe(result); }
       } catch (err) {
         if (cancelled) return;
         if (err instanceof NotAuthorizedError) { setDenied(true); return; }
-        // The API or its serverless database may still be waking up — keep trying.
+        // The API or its serverless database may still be waking up — keep trying, but after a few
+        // failures say what is going wrong instead of spinning in silence.
         console.error('Failed to identify the signed-in user, retrying', err);
+        failures += 1;
+        if (failures >= 3) setFailure(err instanceof Error ? err.message : String(err));
         timer = window.setTimeout(load, 3000);
       }
     }
@@ -79,8 +84,30 @@ export default function App() {
   if (denied) return <AccessDenied onSignOut={() => void signOut()} showSignOut />;
   if (!me) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, color: 'var(--muted)' }}>
-        <span className="spinner" aria-hidden="true" /> Connecting…
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+        <div style={{ maxWidth: 560, textAlign: 'center', color: 'var(--muted)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
+            <span className="spinner" aria-hidden="true" /> Connecting…
+          </div>
+          {failure && (
+            <div style={{ marginTop: 22 }}>
+              <p style={{ margin: '0 0 10px', fontSize: 14 }}>
+                The application could not be reached yet. It keeps retrying; if this lasts, sign in again.
+                Last error:
+              </p>
+              <code style={{
+                display: 'block', margin: '0 0 16px', padding: '10px 12px', borderRadius: 8, fontSize: 12.5,
+                background: 'var(--bg)', border: '1px solid var(--line)', color: 'var(--ink)', wordBreak: 'break-word',
+              }}>
+                {failure}
+              </code>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+                <button className="pill" onClick={() => window.location.reload()}>Try again</button>
+                <button className="pill pill-solid" onClick={() => void signOut()}>Sign out and sign in again</button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     );
   }

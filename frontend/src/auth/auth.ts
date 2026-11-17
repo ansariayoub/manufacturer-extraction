@@ -1,4 +1,5 @@
 import {
+  BrowserAuthError,
   createStandardPublicClientApplication,
   InteractionRequiredAuthError,
   type IPublicClientApplication,
@@ -46,6 +47,24 @@ export async function startSignIn(): Promise<void> {
 }
 
 /**
+ * Lets the page fall back to a Microsoft redirect at most twice in two minutes. Without this limit a
+ * token that can never be renewed would bounce the browser between the app and Microsoft forever.
+ */
+function canRedirectAgain(): boolean {
+  try {
+    const now = Date.now();
+    const recent: number[] = (JSON.parse(sessionStorage.getItem('auth.redirects') ?? '[]') as number[])
+      .filter((t) => now - t < 120_000);
+    if (recent.length >= 2) return false;
+    recent.push(now);
+    sessionStorage.setItem('auth.redirects', JSON.stringify(recent));
+    return true;
+  } catch {
+    return true; // storage blocked: allow the redirect rather than leave the person stuck
+  }
+}
+
+/**
  * Returns a bearer token for the API, or null when sign-in is disabled. Renews silently; if Microsoft
  * needs the user to interact again (expired session, consent) the page is redirected to sign in.
  */
@@ -62,12 +81,15 @@ export async function getAccessToken(): Promise<string | null> {
     const result = await msal.acquireTokenSilent({ scopes: apiScopes, account });
     return result.accessToken;
   } catch (err) {
-    if (err instanceof InteractionRequiredAuthError) {
-      if (!redirecting) {
+    // Either Microsoft wants the person to interact again, or the silent renewal itself failed
+    // (a blocked third-party cookie, a hidden frame that timed out...). Both are cured by a normal
+    // sign-in redirect; if that keeps failing the error is thrown so the screen can show it.
+    if (err instanceof InteractionRequiredAuthError || err instanceof BrowserAuthError) {
+      if (!redirecting && canRedirectAgain()) {
         redirecting = true;
         await msal.acquireTokenRedirect({ scopes: apiScopes, account });
+        return new Promise<string | null>(() => {});
       }
-      return new Promise<string | null>(() => {});
     }
     throw err;
   }
